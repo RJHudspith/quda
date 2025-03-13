@@ -91,7 +91,9 @@ set (QUDA_OBJS
   dslash5_mobius_eofa.cu
   madwf_ml.cpp quda_ptr.cpp
   instantiate.cpp version.cpp
-  block_transpose.cu )
+  block_transpose.cu
+  color_contract.cu
+)
 # cmake-format: on
 
 # current workaround for nvshmem

@@ -1875,6 +1875,40 @@ extern "C" {
   void laphSinkProject(double _Complex *host_sinks, void **host_quark, int n_quark, int tile_quark,
                        void **host_evec, int nevec, int tile_evec, QudaInvertParam *inv_param, const int X[4]);
 
+  // expose functions from interface/slaph_interface.cpp
+  void laphBaryonKernel(int n1, int n2, int n3, int nMom,
+			double _Complex *host_coeffs1,
+			double _Complex *host_coeffs2,
+			double _Complex *host_coeffs3,
+			double _Complex *host_mom,
+			int nEv, void **host_evec,
+			void *retArr,
+			int blockSizeMomProj,
+			const int X[4] ) ;
+
+    void laphCurrentKernel(int n1, int n2, int n_mom,
+			   int block_size_mom_proj,
+			   void **host_quark, 
+			   void **host_quark_bar, 
+			   int *host_mom, 
+			   void *ret_array,
+			   const int X[4]);
+
+  void laphBaryonKernelComputeModeTripletA(int nMom, int nEv, int block_size_mom_proj,
+					   void **host_evec, 
+					   double _Complex *host_mom,
+					   double _Complex *return_array,
+					   const int X[4] );  
+  
+  void laphBaryonKernelComputeModeTripletB(int n1, int n2, int n3, int n_mom, int n_ev, 
+					   double _Complex *host_coeffs1, 
+					   double _Complex *host_coeffs2, 
+					   double _Complex *host_coeffs3,
+					   double _Complex *host_mode_trip_buf, 
+					   double _Complex *return_array);
+
+  void laphBaryonKernelComputeModeTripletEnd();
+
 #ifdef __cplusplus
 }
 #endif

@@ -43,4 +43,11 @@ namespace quda
   void evecProjectLaplace3D(std::vector<Complex> &result, cvector_ref<const ColorSpinorField> &x,
                             cvector_ref<const ColorSpinorField> &y);
 
+  //void evecProjectQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result);
+
+  void innerProductQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result);
+  
+  void colorContractQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result);
+  
+  void colorCrossQuda(const ColorSpinorField &x, const ColorSpinorField &y, ColorSpinorField &result);
 } // namespace quda
