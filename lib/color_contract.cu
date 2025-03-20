@@ -1,9 +1,10 @@
 #include <color_spinor_field.h>
+#include <kernels/color_contract.cuh>
 #include <contract_quda.h>
+
 #include <tunable_nd.h>
 #include <tunable_reduction.h>
 #include <instantiate.h>
-#include <kernels/color_contract.cuh>
 
 namespace quda {
   // Inner Product
@@ -13,7 +14,6 @@ namespace quda {
     const ColorSpinorField &x;
     const ColorSpinorField &y;
     complex<Float> *result;
-
     unsigned int minThreads() const { return x.VolumeCB(); }
     
   public:
@@ -45,20 +45,12 @@ namespace quda {
     }
   };
 
-#ifdef GPU_CONTRACT
   void innerProductQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result)
   {
     checkPrecision(x, y);
-    if (x.Nspin() != 1 || y.Nspin() != 1) errorQuda("Unexpected number of spins x=%d y=%d", x.Nspin(), y.Nspin());
-    
+    if (x.Nspin() != 1 || y.Nspin() != 1) errorQuda("Unexpected number of spins x=%d y=%d", x.Nspin(), y.Nspin()); 
     instantiate<InnerProduct>(x, y, result);
   }
-#else
-  void innerProductQuda(const ColorSpinorField &, const ColorSpinorField &, void *)
-  {
-    errorQuda("Contraction code has not been built");
-  }
-#endif
 
   //----------------------------------------------------------------------------
   template <typename Float, int nColor> class ColorContract : TunableKernel2D
@@ -99,22 +91,14 @@ namespace quda {
     }
   };
 
-#ifdef GPU_CONTRACT
   void colorContractQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result)
   {
     checkPrecision(x, y);
     if (x.GammaBasis() != QUDA_DEGRAND_ROSSI_GAMMA_BASIS || y.GammaBasis() != QUDA_DEGRAND_ROSSI_GAMMA_BASIS)
       errorQuda("Unexpected gamma basis x=%d y=%d", x.GammaBasis(), y.GammaBasis());
     if (x.Nspin() != 4 || y.Nspin() != 4) errorQuda("Unexpected number of spins x=%d y=%d", x.Nspin(), y.Nspin());
-
     instantiate<ColorContract>(x, y, result);
   }
-#else
-  void colorContractQuda(const ColorSpinorField &, const ColorSpinorField &, void *)
-  {
-    errorQuda("Contraction code has not been built");
-  }
-#endif
   //----------------------------------------------------------------------------
 
   template <typename Float, int nColor> class ColorCross : TunableKernel2D
@@ -155,22 +139,12 @@ namespace quda {
     }
   };
 
-#ifdef GPU_CONTRACT  
   void colorCrossQuda(const ColorSpinorField &x, const ColorSpinorField &y, ColorSpinorField &result)
   {
     checkPrecision(x, y);
     checkPrecision(result, y);
-    
     if (x.Ncolor() != 3 || y.Ncolor() != 3 || result.Ncolor() != 3) errorQuda("Unexpected number of colors x = %d y = %d result = %d", x.Ncolor(), y.Ncolor(), result.Ncolor());
     if (x.Nspin() != 1 || y.Nspin() != 1 || result.Nspin() != 1) errorQuda("Unexpected number of spins x = %d y = %d result = %d", x.Nspin(), y.Nspin(), result.Nspin());
-
     instantiate<ColorCross>(x, y, result);
-
   }
-#else
-  void colorCrossQuda(const ColorSpinorField &, const ColorSpinorField &, ColorSpinorField &)
-  {
-    errorQuda("Contraction code has not been built");
-  }
-#endif
 }// namespace quda

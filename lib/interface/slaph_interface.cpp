@@ -12,7 +12,6 @@ using namespace quda;
 // Forward declarations for profiling and parameter checking
 // The helper functions are defined in interface_quda.cpp
 void checkBLASParam(QudaBLASParam &param);
-//TimeProfile &getProfileSinkProject();
 TimeProfile &getProfileBaryonKernel();
 TimeProfile &getProfileBaryonKernelModeTripletsA();
 TimeProfile &getProfileBaryonKernelModeTripletsB();
@@ -22,16 +21,19 @@ TimeProfile &getProfileColorCross();
 TimeProfile &getProfileBLAS();
 TimeProfile &getProfileCurrentKernel();
 
-void laphBaryonKernel(int n1, int n2, int n3, int nMom,
-                      double _Complex *host_coeffs1, 
-                      double _Complex *host_coeffs2, 
-                      double _Complex *host_coeffs3,
-                      double _Complex *host_mom, 
-                      int nEv, void **host_evec, 
-                      void *retArr,
-                      int blockSizeMomProj,
-                      const int X[4] )
-{  
+void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
+		       double _Complex *host_coeffs1, 
+		       double _Complex *host_coeffs2, 
+		       double _Complex *host_coeffs3,
+		       double _Complex *host_mom, 
+		       const int nEv,
+		       void **host_evec, 
+		       void *retArr,
+		       const int blockSizeMomProj,
+		       const int X[4] )
+{
+  std::cout<<"entering laphBaryonKernel ln35"<<std::endl;
+  
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_TOTAL);
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_INIT);
 
@@ -48,6 +50,8 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
   inv_param.input_location = QUDA_CPU_FIELD_LOCATION;
   inv_param.output_location = QUDA_CPU_FIELD_LOCATION;
 
+  std::cout<<"Create host pointers ln53"<<std::endl;
+
   // Create host pointers for the data device side objects.
   //--------------------------------------------------------------------------------
   // Parameter object describing evecs
@@ -55,6 +59,8 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
   for( int mu = 0 ; mu < 4 ; mu++ ) x[mu] = X[mu] ;
   ColorSpinorParam cpu_evec_param(host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
   cpu_evec_param.nSpin = 1;
+
+  std::cout<<"Copy evecs ln63"<<std::endl;
   
   // QUDA style wrapper around the host evecs
   std::vector<ColorSpinorField*> evec;
@@ -65,10 +71,12 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
     evec.push_back(ColorSpinorField::Create(cpu_evec_param));
   }
 
+  std::cout<<"Device evecs ln74"<<std::endl;
+  
   // Allocate device memory for evecs. This is done to ensure a contiguous
   // chunk of memory is used.
-  int nSites = X[0] * X[1] * X[2];
-  size_t data_evec_bytes = nEv * 3 * nSites * 2 * evec[0]->Precision();
+  const int nSites = X[0] * X[1] * X[2];
+  const size_t data_evec_bytes = nEv * 3 * nSites * 2 * evec[0]->Precision();
   void *d_evec = pool_device_malloc(data_evec_bytes);
 
   // Create device vectors for evecs
@@ -81,6 +89,8 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
     cuda_evec_param.v = (std::complex<double>*)d_evec + 3*nSites*i;
     quda_evec.push_back(ColorSpinorField::Create(cuda_evec_param));
   }
+
+  std::cout<<"Device q1 vectors ln93"<<std::endl;
   
   // Create device q1 vectors
   ColorSpinorParam cuda_q1_param(cuda_evec_param);
@@ -90,9 +100,11 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
     quda_q1.push_back(ColorSpinorField::Create(cuda_q1_param));
   }
 
+  std::cout<<"Device q2 vectors ln103"<<std::endl;
+
   // Allocate device memory for q2. This is done to ensure a contiguous
   // chunk of memory is used.
-  size_t data_q2_bytes = n2 * 3 * nSites * 2 * evec[0]->Precision();
+  const size_t data_q2_bytes = n2 * 3 * nSites * 2 * evec[0]->Precision();
   void *d_q2 = pool_device_malloc(data_q2_bytes);
 
   // Create device q2 vectors, aliasing d_q2;
@@ -104,9 +116,11 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
     quda_q2.push_back(ColorSpinorField::Create(cuda_q2_param));
   }
 
+  std::cout<<"Device q3 vectors ln119"<<std::endl;
+
   // Allocate device memory for q3. This is done to ensure a contiguous
   // chunk of memory is used.
-  size_t data_q3_bytes = n3 * 3 * nSites * 2 * evec[0]->Precision();
+  const size_t data_q3_bytes = n3 * 3 * nSites * 2 * evec[0]->Precision();
   void *d_q3 = pool_device_malloc(data_q3_bytes);
 
   // Create device q3 vectors, aliasing d_q3.
@@ -118,6 +132,8 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
     quda_q3.push_back(ColorSpinorField::Create(cuda_q3_param));
   }
 
+  std::cout<<"Device diq vectors ln135"<<std::endl;
+
   // Create device diquark vector
   ColorSpinorParam cuda_diq_param(cuda_evec_param);
   cuda_diq_param.create = QUDA_ZERO_FIELD_CREATE;
@@ -127,12 +143,16 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
   // check we are safe to cast into a Complex (= std::complex<double>)
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
-  }  
+  }
+
+  std::cout<<"Copy host pointers ln148"<<std::endl;
 
   std::complex<double>* hostCoeffs1Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs1);
   std::complex<double>* hostCoeffs2Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs2);
   std::complex<double>* hostCoeffs3Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs3);
   std::complex<double>* hostMomPtr     = reinterpret_cast<std::complex<double>*>(host_mom);
+
+  std::cout<<"Reshuffle coeffs1 ln155"<<std::endl;
 
   // Make a multiBLAS friendly array for coeffs1 
   std::vector<Complex> coeffs1(n1*nEv);
@@ -141,32 +161,46 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
       coeffs1[i*n1 + j] = hostCoeffs1Ptr[j*nEv + i];
     }
   }
+
+  std::cout<<"Device arrays ln165"<<std::endl;
   
   // Device side arrays for coeff2 and coeffs3, the momentum array, the return array,
   // and a temp.
-  size_t data_coeffs2_bytes = n2 * nEv * 2 * quda_evec[0]->Precision();
+  const size_t data_coeffs2_bytes = n2 * nEv * 2 * quda_evec[0]->Precision();
   void *d_coeffs2 = pool_device_malloc(data_coeffs2_bytes);
 
-  size_t data_coeffs3_bytes = n3 * nEv * 2 * quda_evec[0]->Precision();
+  const size_t data_coeffs3_bytes = n3 * nEv * 2 * quda_evec[0]->Precision();
   void *d_coeffs3 = pool_device_malloc(data_coeffs3_bytes);
 
-  size_t data_tmp_bytes = blockSizeMomProj * X[0] * X[1] * X[2] * 2 * quda_q3[0]->Precision();
+  const size_t data_tmp_bytes = blockSizeMomProj * X[0] * X[1] * X[2] * 2 * quda_q3[0]->Precision();
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
 
-  size_t data_ret_bytes = nMom * n1 * n2 * n3 * 2 * quda_q3[0]->Precision();
+  const size_t data_ret_bytes = nMom * n1 * n2 * n3 * 2 * quda_q3[0]->Precision();
   void *d_ret = pool_device_malloc(data_ret_bytes);
 
-  size_t data_mom_bytes = nMom * nSites * 2 * quda_q3[0]->Precision();
+  const size_t data_mom_bytes = nMom * nSites * 2 * quda_q3[0]->Precision();
   void *d_mom = pool_device_malloc(data_mom_bytes);
 
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_INIT);  
   //--------------------------------------------------------------------------------
 
+  std::cout<<"Device copies ln187"<<std::endl;
+  
   // Copy host data to device
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_H2D);
-  for (int i=0; i<nEv; i++) *quda_evec[i] = *evec[i];
+
+  for (int i=0; i<nEv; i++) {
+    std::cout<<"Evec copu -> "<<i<<std::endl;
+    //*quda_evec[i] = *evec[i];
+  }
+  
+  std::cout<<"memcpy1 ln193"<<std::endl;
   qudaMemcpy(d_coeffs2, hostCoeffs2Ptr, data_coeffs2_bytes, qudaMemcpyHostToDevice);  
+
+  std::cout<<"memcpy2 ln196"<<std::endl;
   qudaMemcpy(d_coeffs3, hostCoeffs3Ptr, data_coeffs3_bytes, qudaMemcpyHostToDevice);  
+
+  std::cout<<"memcpy_mom ln199"<<std::endl;
   qudaMemcpy(d_mom, hostMomPtr, data_mom_bytes, qudaMemcpyHostToDevice);  
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_H2D);
 
@@ -209,16 +243,23 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
 
+  std::cout<<"BLAS init ln236"<<std::endl;
+
   getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
   blas_lapack::native::stridedBatchGEMM(d_coeffs2, d_evec, d_q2, cublas_param_init, QUDA_CUDA_FIELD_LOCATION);
   cublas_param_init.m = n3;
   blas_lapack::native::stridedBatchGEMM(d_coeffs3, d_evec, d_q3, cublas_param_init, QUDA_CUDA_FIELD_LOCATION);
   getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+
+  std::cout<<"caxpy ln244"<<std::endl;
   
   // Perfrom the caxpy to compute all q1 vectors
   getProfileAccumulateEvecs().TPSTART(QUDA_PROFILE_COMPUTE);
   quda::blas::legacy::caxpy(coeffs1.data(), quda_evec , quda_q1 ) ;
   getProfileAccumulateEvecs().TPSTOP(QUDA_PROFILE_COMPUTE);
+
+  std::cout<<"Dilution loop ln251"<<std::endl;
+  
   int nInBlock = 0;
   for (int dil1=0; dil1<n1; dil1++) {
     for (int dil2=0; dil2<n2; dil2++) {
@@ -279,11 +320,13 @@ void laphBaryonKernel(int n1, int n2, int n3, int nMom,
 }
 
 // GOOD
-void laphBaryonKernelComputeModeTripletA(int nMom, int nEv, int blockSizeMomProj,
-                                         void **host_evec, 
-                                         double _Complex *host_mom,
-                                         double _Complex *return_arr,
-					 const int X[4])
+void laphBaryonKernelComputeModeTripletA( const int nMom,
+					  const int nEv,
+					  const int blockSizeMomProj,
+					  void **host_evec, 
+					  double _Complex *host_mom,
+					  double _Complex *return_arr,
+					  const int X[4])
 {  
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_TOTAL);
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_INIT);
@@ -317,7 +360,7 @@ void laphBaryonKernelComputeModeTripletA(int nMom, int nEv, int blockSizeMomProj
   evec.reserve(nEv);
   for (int iEv=0; iEv<nEv; ++iEv) {
     cpu_evec_param.v = host_evec[iEv];
-    //evec.push_back(ColorSpinorField::Create(cpu_evec_param));
+    evec.push_back(ColorSpinorField::Create(cpu_evec_param));
   }
 
   // Allocate device memory for evecs. This is done to ensure a contiguous
@@ -355,24 +398,22 @@ void laphBaryonKernelComputeModeTripletA(int nMom, int nEv, int blockSizeMomProj
   // Device side arrays
   //-------------------------------------------------------
   size_t total_bytes = 0;
-  size_t OneGB = 1024;
-  OneGB *= 1024;
-  OneGB *= 1024;
+  const size_t OneGB = 1024*1024*1024;
   
   // Device side temp array (complBuf in chroma_laph)
-  size_t data_tmp_bytes = blockSizeMomProj * X[0] * X[1] * X[2] * 2 * quda_evec[0]->Precision();
+  const size_t data_tmp_bytes = blockSizeMomProj * X[0] * X[1] * X[2] * 2 * quda_evec[0]->Precision();
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   total_bytes += data_tmp_bytes;
   printfQuda("d_tmp bytes = %fGB total_bytes = %fGB\n", (double)data_tmp_bytes/(OneGB), (double)total_bytes/(OneGB)); 
 
   // A second temp array (tmpBuf in chroma_laph) This will be returned for a
   // globalChunkedSumArray (QDP)
-  size_t data_ret_bytes = nEvChoose3 * nMom * 2 * quda_evec[0]->Precision();
+  const size_t data_ret_bytes = nEvChoose3 * nMom * 2 * quda_evec[0]->Precision();
   void *d_ret = pool_device_malloc(data_ret_bytes);
   total_bytes += data_ret_bytes;
   printfQuda("d_ret bytes = %fGB total_bytes = %fGB\n", (double)data_ret_bytes/(OneGB), (double)total_bytes/(OneGB)); 
   
-  size_t data_mom_bytes = nMom * nSites * 2 * quda_evec[0]->Precision();
+  const size_t data_mom_bytes = nMom * nSites * 2 * quda_evec[0]->Precision();
   void *d_mom = pool_device_malloc(data_mom_bytes);
   total_bytes += data_mom_bytes;
   printfQuda("d_mom bytes = %fGB total_bytes = %fGB\n", (double)data_mom_bytes/(OneGB), (double)total_bytes/(OneGB)); 
@@ -479,63 +520,57 @@ void laphBaryonKernelComputeModeTripletA(int nMom, int nEv, int blockSizeMomProj
 void *d_mtb = nullptr;
 bool mtb_loaded = false;
 
-void laphBaryonKernelComputeModeTripletB(int n1, int n2, int n3, int nMom, int nEv,
-                                         double _Complex *host_coeffs1, 
-                                         double _Complex *host_coeffs2, 
-                                         double _Complex *host_coeffs3,
-                                         double _Complex *host_mode_trip_buf,
-                                         double _Complex *host_ret_arr)
+void laphBaryonKernelComputeModeTripletB( const int n1,
+					  const int n2,
+					  const int n3,
+					  const int nMom,
+					  const int nEv,
+					  double _Complex *host_coeffs1, 
+					  double _Complex *host_coeffs2, 
+					  double _Complex *host_coeffs3,
+					  double _Complex *host_mode_trip_buf,
+					  double _Complex *host_ret_arr)
 {
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_TOTAL);
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT);
    
   // number of EV indices (in first position) that this rank deals with
-  int nRanks = comm_size();  
+  const int nRanks = comm_size();  
   if (getVerbosity() >= QUDA_VERBOSE) printfQuda("comm_size() = %d\n", nRanks);
   fflush(stdout);
-  int nSubEv = nEv / nRanks;
+  const int nSubEv = nEv / nRanks;
   if (getVerbosity() >= QUDA_VERBOSE) printfQuda("nSubEv = %d\n", nSubEv);
   fflush(stdout);
-  int iRank = comm_rank();
+  const int iRank = comm_rank();
 
   // check we are safe to cast into a Complex (= std::complex<double>)
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }  
    
-  std::complex<double>* hostCoeffs1Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs1);
-  std::complex<double>* hostCoeffs2Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs2);
-  std::complex<double>* hostCoeffs3Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs3);
+  std::complex<double>* hostCoeffs1Ptr     = reinterpret_cast<std::complex<double>*>(host_coeffs1);
+  std::complex<double>* hostCoeffs2Ptr     = reinterpret_cast<std::complex<double>*>(host_coeffs2);
+  std::complex<double>* hostCoeffs3Ptr     = reinterpret_cast<std::complex<double>*>(host_coeffs3);
   std::complex<double>* hostModeTripBufPtr = reinterpret_cast<std::complex<double>*>(host_mode_trip_buf);
-  std::complex<double>* hostRetArrPtr = reinterpret_cast<std::complex<double>*>(host_ret_arr);
+  std::complex<double>* hostRetArrPtr      = reinterpret_cast<std::complex<double>*>(host_ret_arr);
    
   // Device side arrays
   //-------------------------------------------------------
   // We will define all the array sizes here, then malloc and free
   // at optimal points in the workflow.
   size_t total_bytes = 0;
-  size_t OneGB = 1024;
-  OneGB *= 1024;
-  OneGB *= 1024;
+  const size_t OneGB = 1024*1024*1024;
 
-  size_t data_coeffs1_bytes = n1 * nEv * 2 * QUDA_DOUBLE_PRECISION;
-  size_t data_coeffs2_bytes = n2 * nEv * 2 * QUDA_DOUBLE_PRECISION;
-  size_t data_coeffs3_bytes = n3 * nEv * 2 * QUDA_DOUBLE_PRECISION;
+  const size_t data_coeffs1_bytes = n1 * nEv * 2 * QUDA_DOUBLE_PRECISION;
+  const size_t data_coeffs2_bytes = n2 * nEv * 2 * QUDA_DOUBLE_PRECISION;
+  const size_t data_coeffs3_bytes = n3 * nEv * 2 * QUDA_DOUBLE_PRECISION;
   
-  size_t data_mtb_bytes = nMom;
-  data_mtb_bytes *= nSubEv;
-  data_mtb_bytes *= nEv;
-  data_mtb_bytes *= nEv;
-  data_mtb_bytes *= 2 * QUDA_DOUBLE_PRECISION;
+  const size_t data_mtb_bytes = nMom*nSubEv*nEv*nEv*2*QUDA_DOUBLE_PRECISION;
 
-  size_t data_q3_bytes = nMom;
-  data_q3_bytes *= nSubEv;
-  data_q3_bytes *= nEv;
-  data_q3_bytes *= n3;
-  data_q3_bytes *= 2 * QUDA_DOUBLE_PRECISION;
+  const size_t data_q3_bytes = nMom*nSubEv*nEv*n3*2*QUDA_DOUBLE_PRECISION;
   
-  size_t data_tmp_bytes = nSubEv * n2 * n3 * 2 * QUDA_DOUBLE_PRECISION;
-  size_t data_ret_bytes = nMom * n1 * n2 * n3 * 2 * QUDA_DOUBLE_PRECISION;
+  const size_t data_tmp_bytes = nSubEv * n2 * n3 * 2 * QUDA_DOUBLE_PRECISION;
+  const size_t data_ret_bytes = nMom * n1 * n2 * n3 * 2 * QUDA_DOUBLE_PRECISION;
   //--------------------------------------------------------------------------------
 
   // Allocate required memory
@@ -696,13 +731,15 @@ void laphBaryonKernelComputeModeTripletEnd() {
   saveTuneCache();
 }
 
-void laphCurrentKernel(int n1, int n2, int n_mom,
-                       int block_size_mom_proj,
-		       void **host_quark,
-		       void **host_quark_bar,
-		       int *host_mom,
-		       void *ret_arr,
-		       const int X[4])
+void laphCurrentKernel( const int n1,
+			const int n2,
+			const int n_mom,
+			const int block_size_mom_proj,
+			void **host_quark,
+			void **host_quark_bar,
+			double _Complex *host_mom,
+			void *ret_arr,
+			const int X[4])
 {  
   getProfileCurrentKernel().TPSTART(QUDA_PROFILE_TOTAL);
   getProfileCurrentKernel().TPSTART(QUDA_PROFILE_INIT);
@@ -712,26 +749,24 @@ void laphCurrentKernel(int n1, int n2, int n_mom,
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
 
+  // wait a fucking minute, host_mom is an integer!!! This is just wrong.
   std::complex<double>* host_mom_ptr = reinterpret_cast<std::complex<double>*>(host_mom);
   
   QudaInvertParam inv_param = newQudaInvertParam();
-  
   inv_param.dslash_type = QUDA_WILSON_DSLASH;
   inv_param.solution_type = QUDA_MAT_SOLUTION;
   inv_param.solve_type = QUDA_DIRECT_SOLVE;
-  
   inv_param.cpu_prec = QUDA_DOUBLE_PRECISION;
   inv_param.cuda_prec = QUDA_DOUBLE_PRECISION;
   inv_param.dirac_order = QUDA_DIRAC_ORDER;
-  
   inv_param.input_location = QUDA_CPU_FIELD_LOCATION;
   inv_param.output_location = QUDA_CPU_FIELD_LOCATION;
 
   // Some common variables
-  size_t n_color = 3;
-  size_t n_spatial_sites = X[0] * X[1] * X[2];
-  size_t n_sites = n_spatial_sites * X[3];
-  QudaPrecision precision = QUDA_DOUBLE_PRECISION;
+  const size_t n_color = 3;
+  const size_t n_spatial_sites = X[0] * X[1] * X[2];
+  const size_t n_sites = n_spatial_sites * X[3];
+  const QudaPrecision precision = QUDA_DOUBLE_PRECISION;
   
   // Create host pointers for the data device side objects.
   //--------------------------------------------------------------------------------
@@ -753,7 +788,7 @@ void laphCurrentKernel(int n1, int n2, int n_mom,
   // Allocate device memory for quark. This is done to ensure a contiguous
   // chunk of memory is used.
   // vectors * colours * spatial sites * complex * precision
-  size_t data_quark_bytes = n2 * n_color * n_sites * 2 * precision;
+  const size_t data_quark_bytes = n2 * n_color * n_sites * 2 * precision;
   void *d_quark = pool_device_malloc(data_quark_bytes);
 
   // Create device vectors for quarks
@@ -783,7 +818,7 @@ void laphCurrentKernel(int n1, int n2, int n_mom,
   // Allocate device memory for quark_bar. This is done to ensure a contiguous
   // chunk of memory is used.
   // vectors * colours * spatial sites * complex * precision
-  size_t data_quark_bar_bytes = n1 * n_color * n_sites * 2 * precision;
+  const size_t data_quark_bar_bytes = n1 * n_color * n_sites * 2 * precision;
   void *d_quark_bar = pool_device_malloc(data_quark_bar_bytes);
 
   // Create device vectors for quark_bar
@@ -798,27 +833,29 @@ void laphCurrentKernel(int n1, int n2, int n_mom,
   }
   
   // Device array to hold the entire return array
-  size_t data_ret_bytes = n_mom * X[3] * n1 * n2 * 2 * precision;
+  const size_t data_ret_bytes = n_mom * X[3] * n1 * n2 * 2 * precision;
   void *d_ret = pool_device_malloc(data_ret_bytes);
 
   // Device array to hold the inner production
-  size_t data_tmp_bytes = block_size_mom_proj * n_sites * 2 * precision;
+  const size_t data_tmp_bytes = block_size_mom_proj * n_sites * 2 * precision;
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
 
   // Device array to hold the momentum
-  size_t data_mom_bytes = n_mom * n_spatial_sites * 2 * precision;
+  const size_t data_mom_bytes = n_mom * n_spatial_sites * 2 * precision;
   void *d_mom = pool_device_malloc(data_mom_bytes);
-
-  std::vector<int> momenta(n_mom * 3, 0);
-  for(int i=0; i<3*n_mom; i++) momenta[i] = host_mom[i];
 
   __complex__ double alpha = 1.0 , beta = 0.0;    
 
+  std::cout<<"Here gemm"<<std::endl ;
+  
   QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
   cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
   cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
-  cublas_param_mom_sum.m = n_mom;
-  cublas_param_mom_sum.k = n_spatial_sites;
+
+  cublas_param_mom_sum.n = n_mom;
+  cublas_param_mom_sum.m = n_mom*X[3] ;
+
+  cublas_param_mom_sum.k   = n_spatial_sites;
   cublas_param_mom_sum.lda = n_spatial_sites;
   cublas_param_mom_sum.ldb = n_spatial_sites;
   cublas_param_mom_sum.batch_count = 1;
@@ -826,6 +863,9 @@ void laphCurrentKernel(int n1, int n2, int n_mom,
   cublas_param_mom_sum.beta  = (__complex__ double)beta;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
+
+  std::cout<<"Here gemm ldb ->"<<cublas_param_mom_sum.ldb<<std::endl ;
+  std::cout<<"Here gemm lda ->"<<cublas_param_mom_sum.lda<<std::endl ;
 
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_INIT);
   //--------------------------------------------------------------------------------
@@ -840,34 +880,44 @@ void laphCurrentKernel(int n1, int n2, int n_mom,
   qudaMemcpy(d_mom, host_mom_ptr, data_mom_bytes, qudaMemcpyHostToDevice);  
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_H2D);
 
+  std::cout<<"Here dilution loop"<<std::endl ;
+
   int n_in_block = 0;
   for (int dil1=0; dil1<n1; dil1++) {
     for (int dil2=0; dil2<n2; dil2++) {
 
       std::vector<Complex> mom_mode_data(n_mom * X[3], 0.0);
       getProfileCurrentKernel().TPSTART(QUDA_PROFILE_COMPUTE);
-      innerProductQuda(*quda_quark_bar[dil1], *quda_quark[dil2], 
-                       (std::complex<double>*)d_tmp + n_sites*n_in_block);
+      innerProductQuda(*quda_quark_bar[dil1], *quda_quark[dil2], (std::complex<double>*)d_tmp + n_sites*n_in_block);
       n_in_block++;
       getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_COMPUTE);
       
       if (n_in_block == block_size_mom_proj || ((dil1+1 == n1) && (dil2+1 == n2))) {
-        cublas_param_mom_sum.n = n_in_block * X[3];
-        // c offset dictates where in the d_ret array we place the result. Each C matrix is n_in_block * n_mom * X[3] in size, consistent with m * ldc.               
+
+	cublas_param_mom_sum.m = n_in_block * X[3];
+
+	// c offset dictates where in the d_ret array we place the result. Each C matrix is n_in_block * n_mom * X[3] in size, consistent with m * ldc.               
         cublas_param_mom_sum.c_offset = n_mom * X[3] * n_in_block;
-        cublas_param_mom_sum.ldb = X[3] * n_in_block;
+
+	// doesn't work for 4^3x8, so what is really happening here?
+        //cublas_param_mom_sum.ldb = X[3] * n_in_block;
         cublas_param_mom_sum.ldc = X[3] * n_in_block;
-        getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);	  
+
+	getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
+	std::cout<<"In here strided batch array"<<std::endl ;
         blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret, cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
         getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);	  
-        n_in_block = 0;
+
+	n_in_block = 0;
       }
     }
   }
+
+  std::cout<<"Outside of dilution loop"<<std::endl ;
   
   // Copy device data back to host
-  qudaMemcpy((void*)&ret_arr_tmp[0], d_ret, data_ret_bytes, qudaMemcpyHostToDevice);
-  // Copy into return array 
+  qudaMemcpy((void*)&ret_arr_tmp[0], d_ret, data_ret_bytes, qudaMemcpyDeviceToHost) ; //qudaMemcpyHostToDevice);
+  // Copy into return array
   memcpy(ret_arr, ret_arr_tmp.data(), sizeof(Complex) * n_mom * X[3] * n1 * n2);
   
   // Clean up memory allocations

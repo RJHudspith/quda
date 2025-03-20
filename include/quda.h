@@ -1890,7 +1890,7 @@ extern "C" {
 			   int block_size_mom_proj,
 			   void **host_quark, 
 			   void **host_quark_bar, 
-			   int *host_mom, 
+			   double _Complex *host_mom, 
 			   void *ret_array,
 			   const int X[4]);
 

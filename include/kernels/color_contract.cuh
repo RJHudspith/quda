@@ -4,12 +4,13 @@
 #include <index_helper.cuh>
 #include <quda_matrix.h>
 #include <matrix_field.h>
+
+#include <constant_kernel_arg.h>
 #include <kernel.h>
-//#include <kernels/contraction_helper.cuh>
 
 namespace quda {
 
-template <typename Arg> struct InnerProd {
+    template <typename Arg> struct InnerProd {
     const Arg &arg;
     constexpr InnerProd(const Arg &arg) : arg(arg) {}
     static constexpr const char *filename() { return KERNEL_FILE; }
@@ -35,8 +36,7 @@ template <typename Arg> struct InnerProd {
     }
   };
   
-  template <typename Float, int nColor_> struct ColorContractArg 
-  {
+  template <typename Float, int nColor_> struct ColorContractArg : kernel_param<> {
     using real = typename mapper<Float>::type;
     static constexpr int nColor = nColor_;    
     static constexpr int nSpin = 4;
@@ -65,10 +65,9 @@ template <typename Arg> struct InnerProd {
     }
   };
 
-
   template <typename Arg> struct ColorContraction {
-    Arg &arg;
-    constexpr ColorContraction(Arg &arg) : arg(arg) {}
+    const Arg &arg;
+    constexpr ColorContraction(const Arg &arg) : arg(arg) {}
     static constexpr const char *filename() { return KERNEL_FILE; }
 
     __device__ __host__ inline void operator()(int x_cb, int parity)
@@ -88,8 +87,7 @@ template <typename Arg> struct InnerProd {
     }
   };
 
-  template <typename Float, int nColor_> struct ColorCrossArg 
-  {
+  template <typename Float, int nColor_> struct ColorCrossArg : kernel_param<> {
     using real = typename mapper<Float>::type;
     static constexpr int nColor = nColor_;
     static constexpr int nSpin = 1;
@@ -118,9 +116,9 @@ template <typename Arg> struct InnerProd {
     }
   };
 
-  template <typename Arg> struct ColorCrossCompute {
-    Arg &arg;
-    constexpr ColorCrossCompute(Arg &arg) : arg(arg) {}
+    template <typename Arg> struct ColorCrossCompute {
+    const Arg &arg;
+    constexpr ColorCrossCompute(const Arg &arg) : arg(arg) {}
     static constexpr const char *filename() { return KERNEL_FILE; }
 
     __device__ __host__ inline void operator()(int x_cb, int parity)
