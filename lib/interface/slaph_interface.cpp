@@ -22,10 +22,10 @@ TimeProfile &getProfileBLAS();
 TimeProfile &getProfileCurrentKernel();
 
 void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
-		       double _Complex *host_coeffs1, 
-		       double _Complex *host_coeffs2, 
-		       double _Complex *host_coeffs3,
-		       double _Complex *host_mom, 
+		       const double _Complex *host_coeffs1, 
+		       const double _Complex *host_coeffs2, 
+		       const double _Complex *host_coeffs3,
+		       const double _Complex *host_mom, 
 		       const int nEv,
 		       void **host_evec, 
 		       void *retArr,
@@ -132,16 +132,16 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
 
-  std::complex<double>* hostCoeffs1Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs1);
-  std::complex<double>* hostCoeffs2Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs2);
-  std::complex<double>* hostCoeffs3Ptr = reinterpret_cast<std::complex<double>*>(host_coeffs3);
-  std::complex<double>* hostMomPtr     = reinterpret_cast<std::complex<double>*>(host_mom);
+  const std::complex<double>* hostCoeffs1Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs1);
+  const std::complex<double>* hostCoeffs2Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs2);
+  const std::complex<double>* hostCoeffs3Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs3);
+  const std::complex<double>* hostMomPtr     = reinterpret_cast<const std::complex<double>*>(host_mom);
 
   // Make a multiBLAS friendly array for coeffs1 
   std::vector<Complex> coeffs1(n1*nEv);
   for(int j=0; j<n1; j++) {
     for(int i=0; i<nEv; i++) {
-      coeffs1[i*n1 + j] = hostCoeffs1Ptr[j*nEv + i];
+      coeffs1[i*n1 + j] = hostCoeffs1Ptr[i + j*nEv] ;
     }
   }
   
@@ -292,7 +292,7 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
 					  const int nEv,
 					  const int blockSizeMomProj,
 					  void **host_evec, 
-					  double _Complex *host_mom,
+					  const double _Complex *host_mom,
 					  double _Complex *return_arr,
 					  const int X[4])
 {  
@@ -361,7 +361,7 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }  
   
-  std::complex<double>* hostMomPtr = reinterpret_cast<std::complex<double>*>(host_mom); 
+  const std::complex<double>* hostMomPtr = reinterpret_cast<const std::complex<double>*>(host_mom); 
   std::complex<double>* retArrPtr  = reinterpret_cast<std::complex<double>*>(return_arr); 
 
   // Device side arrays
@@ -497,10 +497,10 @@ void laphBaryonKernelComputeModeTripletB( const int n1,
 					  const int n3,
 					  const int nMom,
 					  const int nEv,
-					  double _Complex *host_coeffs1, 
-					  double _Complex *host_coeffs2, 
-					  double _Complex *host_coeffs3,
-					  double _Complex *host_mode_trip_buf,
+					  const double _Complex *host_coeffs1, 
+					  const double _Complex *host_coeffs2, 
+					  const double _Complex *host_coeffs3,
+					  const double _Complex *host_mode_trip_buf,
 					  double _Complex *host_ret_arr)
 {
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_TOTAL);
@@ -520,11 +520,11 @@ void laphBaryonKernelComputeModeTripletB( const int n1,
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }  
    
-  std::complex<double>* hostCoeffs1Ptr     = reinterpret_cast<std::complex<double>*>(host_coeffs1);
-  std::complex<double>* hostCoeffs2Ptr     = reinterpret_cast<std::complex<double>*>(host_coeffs2);
-  std::complex<double>* hostCoeffs3Ptr     = reinterpret_cast<std::complex<double>*>(host_coeffs3);
-  std::complex<double>* hostModeTripBufPtr = reinterpret_cast<std::complex<double>*>(host_mode_trip_buf);
-  std::complex<double>* hostRetArrPtr      = reinterpret_cast<std::complex<double>*>(host_ret_arr);
+  const std::complex<double>* hostCoeffs1Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs1);
+  const std::complex<double>* hostCoeffs2Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs2);
+  const std::complex<double>* hostCoeffs3Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs3);
+  const std::complex<double>* hostModeTripBufPtr = reinterpret_cast<const std::complex<double>*>(host_mode_trip_buf);
+  std::complex<double>* hostRetArrPtr        = reinterpret_cast<std::complex<double>*>(host_ret_arr);
    
   // Device side arrays
   //-------------------------------------------------------
@@ -709,7 +709,7 @@ void laphCurrentKernel( const int n1,
 			const int block_size_mom_proj,
 			void **host_quark,
 			void **host_quark_bar,
-			double _Complex *host_mom,
+			const double _Complex *host_mom,
 			void *ret_arr,
 			const int X[4])
 {  
@@ -722,7 +722,7 @@ void laphCurrentKernel( const int n1,
   }
 
   // wait a fucking minute, host_mom is an integer!!! This is just wrong.
-  std::complex<double>* host_mom_ptr = reinterpret_cast<std::complex<double>*>(host_mom);
+  const std::complex<double>* host_mom_ptr = reinterpret_cast<const std::complex<double>*>(host_mom);
   
   QudaInvertParam inv_param = newQudaInvertParam();
   inv_param.dslash_type = QUDA_WILSON_DSLASH;

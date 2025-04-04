@@ -1876,36 +1876,48 @@ extern "C" {
                        void **host_evec, int nevec, int tile_evec, QudaInvertParam *inv_param, const int X[4]);
 
   // expose functions from interface/slaph_interface.cpp
-  void laphBaryonKernel(int n1, int n2, int n3, int nMom,
-			double _Complex *host_coeffs1,
-			double _Complex *host_coeffs2,
-			double _Complex *host_coeffs3,
-			double _Complex *host_mom,
-			int nEv, void **host_evec,
-			void *retArr,
-			int blockSizeMomProj,
-			const int X[4] ) ;
+  void laphBaryonKernel( const int n1,
+			 const int n2,
+			 const int n3,
+			 const int nMom,
+			 const double _Complex *host_coeffs1,
+			 const double _Complex *host_coeffs2,
+			 const double _Complex *host_coeffs3,
+			 const double _Complex *host_mom,
+			 const int nEv,
+			 void **host_evec,
+			 void *retArr,
+			 const int blockSizeMomProj,
+			 const int X[4] ) ;
 
-    void laphCurrentKernel(int n1, int n2, int n_mom,
-			   int block_size_mom_proj,
-			   void **host_quark, 
-			   void **host_quark_bar, 
-			   double _Complex *host_mom, 
-			   void *ret_array,
-			   const int X[4]);
-
-  void laphBaryonKernelComputeModeTripletA(int nMom, int nEv, int block_size_mom_proj,
-					   void **host_evec, 
-					   double _Complex *host_mom,
-					   double _Complex *return_array,
-					   const int X[4] );  
+  void laphBaryonKernelComputeModeTripletA( const int nMom,
+					    const int nEv,
+					    const int block_size_mom_proj,
+					    void **host_evec, 
+					    const double _Complex *host_mom,
+					    double _Complex *return_array,
+					    const int X[4] );  
   
-  void laphBaryonKernelComputeModeTripletB(int n1, int n2, int n3, int n_mom, int n_ev, 
-					   double _Complex *host_coeffs1, 
-					   double _Complex *host_coeffs2, 
-					   double _Complex *host_coeffs3,
-					   double _Complex *host_mode_trip_buf, 
-					   double _Complex *return_array);
+  void laphBaryonKernelComputeModeTripletB( const int n1,
+					    const int n2,
+					    const int n3,
+					    const int n_mom,
+					    const int n_ev, 
+					    const double _Complex *host_coeffs1, 
+					    const double _Complex *host_coeffs2, 
+					    const double _Complex *host_coeffs3,
+					    const double _Complex *host_mode_trip_buf, 
+					    double _Complex *return_array);
+
+  void laphCurrentKernel( const int n1,
+			  const int n2,
+			  const int n_mom,
+			  const int block_size_mom_proj,
+			  void **host_quark, 
+			  void **host_quark_bar, 
+			  const double _Complex *host_mom, 
+			  void *ret_array,
+			  const int X[4] );
 
   void laphBaryonKernelComputeModeTripletEnd();
 
