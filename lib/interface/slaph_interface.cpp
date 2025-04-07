@@ -743,8 +743,7 @@ void laphCurrentKernel( const int n1,
   // Create host pointers for the data device side objects.
   //--------------------------------------------------------------------------------
   // Parameter object describing quark
-  lat_dim_t x ;
-  for( int mu = 0 ; mu < 4 ; mu++ ) x[mu] = X[mu] ;
+  const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
   ColorSpinorParam cpu_quark_param(host_quark, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
   cpu_quark_param.nSpin = 1;
   
@@ -808,7 +807,7 @@ void laphCurrentKernel( const int n1,
   const size_t data_ret_bytes = n_mom * X[3] * n1 * n2 * 2 * precision;
   void *d_ret = pool_device_malloc(data_ret_bytes);
 
-  // Device array to hold the inner production
+  // Device array to hold the inner product
   const size_t data_tmp_bytes = block_size_mom_proj * n_sites * 2 * precision;
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
 
@@ -816,81 +815,62 @@ void laphCurrentKernel( const int n1,
   const size_t data_mom_bytes = n_mom * n_spatial_sites * 2 * precision;
   void *d_mom = pool_device_malloc(data_mom_bytes);
 
-  __complex__ double alpha = 1.0 , beta = 0.0;    
-
-  std::cout<<"Here gemm"<<std::endl ;
-  
+  __complex__ double alpha = 1.0 , beta = 0.0;
   QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
   cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
   cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
 
-  cublas_param_mom_sum.n = n_mom;
-  cublas_param_mom_sum.m = n_mom*X[3] ;
+  // going to be doing A.B where A is the host_mom array of length
+  // nmom x nsites | nsites x T
+  // output is an n_mom x X[3] matrix
+  cublas_param_mom_sum.m = n_mom ; // # of rows of A -> mom list
+  cublas_param_mom_sum.lda = n_spatial_sites ; // # of cols of A == L^3
+  
+  cublas_param_mom_sum.n = X[3] ; // # of rows of (B)^T which is time in lexi order
+  cublas_param_mom_sum.ldb = n_spatial_sites ; // #of rows of B == L^3
+  
+  cublas_param_mom_sum.k   = n_spatial_sites ; // should be lda and ldb
 
-  cublas_param_mom_sum.k   = n_spatial_sites;
-  cublas_param_mom_sum.lda = n_spatial_sites;
-  cublas_param_mom_sum.ldb = n_spatial_sites;
+  cublas_param_mom_sum.ldc = X[3] ;
+
   cublas_param_mom_sum.batch_count = 1;
   cublas_param_mom_sum.alpha = (__complex__ double)alpha;  
   cublas_param_mom_sum.beta  = (__complex__ double)beta;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
 
-  std::cout<<"Here gemm ldb ->"<<cublas_param_mom_sum.ldb<<std::endl ;
-  std::cout<<"Here gemm lda ->"<<cublas_param_mom_sum.lda<<std::endl ;
-
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_INIT);
   //--------------------------------------------------------------------------------
 
-  std::vector<Complex> ret_arr_tmp(n_mom * X[3] * n1 * n2, 0.0);
-
   // Copy host data to device
   getProfileCurrentKernel().TPSTART(QUDA_PROFILE_H2D);
+
+  // wasteful pull to device here
   for (int i=0; i<n2; i++) *quda_quark[i] = *quark[i];
   for (int i=0; i<n1; i++) *quda_quark_bar[i] = *quark_bar[i];
   // For the moment, use the chroma_laph defined momenta, then compute on host
   qudaMemcpy(d_mom, host_mom_ptr, data_mom_bytes, qudaMemcpyHostToDevice);  
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_H2D);
 
-  std::cout<<"Here dilution loop"<<std::endl ;
-
-  int n_in_block = 0;
+  // doing too much work here as (di1,dil2) == (dil2,dil1)*
   for (int dil1=0; dil1<n1; dil1++) {
     for (int dil2=0; dil2<n2; dil2++) {
-
-      std::vector<Complex> mom_mode_data(n_mom * X[3], 0.0);
-      getProfileCurrentKernel().TPSTART(QUDA_PROFILE_COMPUTE);
-      innerProductQuda(*quda_quark_bar[dil1], *quda_quark[dil2], (std::complex<double>*)d_tmp + n_sites*n_in_block);
-      n_in_block++;
-      getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_COMPUTE);
       
-      if (n_in_block == block_size_mom_proj || ((dil1+1 == n1) && (dil2+1 == n2))) {
+      getProfileCurrentKernel().TPSTART(QUDA_PROFILE_COMPUTE);
+      innerProductQuda(*quda_quark_bar[dil1], *quda_quark[dil2], (std::complex<double>*)d_tmp);
+      getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_COMPUTE);
 
-	cublas_param_mom_sum.m = n_in_block * X[3];
-
-	// c offset dictates where in the d_ret array we place the result. Each C matrix is n_in_block * n_mom * X[3] in size, consistent with m * ldc.               
-        cublas_param_mom_sum.c_offset = n_mom * X[3] * n_in_block;
-
-	// doesn't work for 4^3x8, so what is really happening here?
-        //cublas_param_mom_sum.ldb = X[3] * n_in_block;
-        cublas_param_mom_sum.ldc = X[3] * n_in_block;
-
-	getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
-	std::cout<<"In here strided batch array"<<std::endl ;
-        blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret, cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
-        getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);	  
-
-	n_in_block = 0;
-      }
+      // want a simple GEMM version for testing and expand it for striding and batching when I can be fucked
+      getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
+      blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp,
+					    (std::complex<double>*)d_ret+(dil2+n2*dil1)*X[3]*n_mom,
+					    cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
+      getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
     }
   }
-
-  std::cout<<"Outside of dilution loop"<<std::endl ;
   
   // Copy device data back to host
-  qudaMemcpy((void*)&ret_arr_tmp[0], d_ret, data_ret_bytes, qudaMemcpyDeviceToHost) ; //qudaMemcpyHostToDevice);
-  // Copy into return array
-  memcpy(ret_arr, ret_arr_tmp.data(), sizeof(Complex) * n_mom * X[3] * n1 * n2);
+  qudaMemcpy(ret_arr, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost) ;
   
   // Clean up memory allocations
   getProfileCurrentKernel().TPSTART(QUDA_PROFILE_FREE);

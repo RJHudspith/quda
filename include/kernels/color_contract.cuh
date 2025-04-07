@@ -24,23 +24,17 @@ namespace quda {
       Vector x = arg.x(x_cb, parity);
       Vector y = arg.y(x_cb, parity);
 
-      // Collect index data
-      //int idx[4] = { };
-      //getCoords(idx, x_cb, arg.X, parity);
-
-      // Compute the inner product over color
-      res = innerProduct(x, y, 0, 0);
-      // It is safe to use getIndexFull here as the array is not a QUDA array
-      arg.s[getIndexFull(x_cb, arg.X, parity)] = res;
-      //arg.s[x_cb + parity*arg.threads.x] = res;
+      // Is it safe to use getIndexFull here?
+      //arg.s[getIndexFull(x_cb, arg.X, parity)] = innerProduct(x, y, 0, 0) ;
+      arg.s[x_cb + parity*arg.threads.x] = innerProduct(x, y, 0, 0) ;
     }
   };
   
   template <typename Float, int nColor_> struct ColorContractArg : kernel_param<> {
     using real = typename mapper<Float>::type;
     static constexpr int nColor = nColor_;    
-    static constexpr int nSpin = 4;
-    static constexpr bool spin_project = true;
+    static constexpr int nSpin = 1;
+    static constexpr bool spin_project = false ; //true;
     static constexpr bool spinor_direct_load = false; // false means texture load
 
     // Create a typename F for the ColorSpinorFields
@@ -80,10 +74,7 @@ namespace quda {
       Vector y = arg.y(x_cb, parity);
 
       // Compute the inner product over color
-      res = colorContract(x, y, 0, 0);
-      //printf("parity = %d, idx_cb = %d\n", parity, idx_cb);
-      arg.s[x_cb + parity*arg.threads.x] = res;
-      //arg.s.save(A, x_cb, parity);
+      arg.s[x_cb + parity*arg.threads.x] = colorContract(x, y, 0, 0);
     }
   };
 
@@ -135,7 +126,7 @@ namespace quda {
       y = arg.y(x_cb, parity);
       
       // Compute the cross product
-      result = crossProduct(x, y, 0, 0);      
+      result = crossProduct(x, y, 0, 0);
       arg.result(x_cb, parity) = result;
     }
   };
