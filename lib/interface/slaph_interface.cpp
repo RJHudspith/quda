@@ -11,7 +11,7 @@ using namespace quda;
 
 // Forward declarations for profiling and parameter checking
 // The helper functions are defined in interface_quda.cpp
-void checkBLASParam(QudaBLASParam &param);
+//void checkBLASParam(QudaBLASParam &param);
 TimeProfile &getProfileBaryonKernel();
 TimeProfile &getProfileBaryonKernelModeTripletsA();
 TimeProfile &getProfileBaryonKernelModeTripletsB();
@@ -27,179 +27,97 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
 		       const double _Complex *host_coeffs3,
 		       const double _Complex *host_mom, 
 		       const int nEv,
-		       void **host_evec, 
-		       void *retArr,
+		       void **host_evec,
+		       QudaInvertParam inv_param,
+		       void *return_array,
 		       const int blockSizeMomProj,
 		       const int X[4] )
-{  
+{
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_TOTAL);
-  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_INIT);
-
-  QudaInvertParam inv_param = newQudaInvertParam();
   
-  inv_param.dslash_type = QUDA_WILSON_DSLASH;
-  inv_param.solution_type = QUDA_MAT_SOLUTION;
-  inv_param.solve_type = QUDA_DIRECT_SOLVE;
-  
-  inv_param.cpu_prec = QUDA_DOUBLE_PRECISION;
-  inv_param.cuda_prec = QUDA_DOUBLE_PRECISION;
-  inv_param.dirac_order = QUDA_DIRAC_ORDER;
-  inv_param.gamma_basis = QUDA_DEGRAND_ROSSI_GAMMA_BASIS;
-
-  inv_param.input_location = QUDA_CPU_FIELD_LOCATION;
-  inv_param.output_location = QUDA_CPU_FIELD_LOCATION;
-
-  std::cout<<"Create host pointers ln53"<<std::endl;
-
-  // Create host pointers for the data device side objects.
-  //--------------------------------------------------------------------------------
-  // Parameter object describing evecs
-  lat_dim_t x ;
-  for( int mu = 0 ; mu < 4 ; mu++ ) x[mu] = X[mu] ;
-  ColorSpinorParam cpu_evec_param(host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
-  cpu_evec_param.nSpin = 1;
-  
-  // QUDA style wrapper around the host evecs
-  std::vector<ColorSpinorField*> evec;
-  cpu_evec_param.create = QUDA_REFERENCE_FIELD_CREATE;
-  evec.reserve(nEv);
-  for (int iEv=0; iEv<nEv; ++iEv) {
-    cpu_evec_param.v = host_evec[iEv];
-    evec.push_back(ColorSpinorField::Create(cpu_evec_param));
-  }
-  
-  // Allocate device memory for evecs. This is done to ensure a contiguous
-  // chunk of memory is used.
-  const int nSites = X[0] * X[1] * X[2];
-  const size_t data_evec_bytes = nEv * 3 * nSites * 2 * evec[0]->Precision();
-  void *d_evec = pool_device_malloc(data_evec_bytes);
-
-  // Create device vectors for evecs
-  ColorSpinorParam cuda_evec_param(cpu_evec_param);
-  cuda_evec_param.location = QUDA_CUDA_FIELD_LOCATION;
-  cuda_evec_param.create = QUDA_REFERENCE_FIELD_CREATE;
-  cuda_evec_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);
-  std::vector<ColorSpinorField *> quda_evec ;
-  for (int i=0; i<nEv; i++) {
-    cuda_evec_param.v = (std::complex<double>*)d_evec + 3*nSites*i;
-    quda_evec.push_back(ColorSpinorField::Create(cuda_evec_param));
-  }
-  
-  // Create device q1 vectors
-  ColorSpinorParam cuda_q1_param(cuda_evec_param);
-  cuda_q1_param.create = QUDA_ZERO_FIELD_CREATE;
-  std::vector<ColorSpinorField *> quda_q1;
-  for(int i=0; i<n1; i++) {
-    quda_q1.push_back(ColorSpinorField::Create(cuda_q1_param));
-  }
-
-  // Allocate device memory for q2. This is done to ensure a contiguous
-  // chunk of memory is used.
-  const size_t data_q2_bytes = n2 * 3 * nSites * 2 * evec[0]->Precision();
-  void *d_q2 = pool_device_malloc(data_q2_bytes);
-
-  // Create device q2 vectors, aliasing d_q2;
-  ColorSpinorParam cuda_q2_param(cuda_evec_param);
-  cuda_q2_param.create = QUDA_REFERENCE_FIELD_CREATE;
-  std::vector<ColorSpinorField *> quda_q2;
-  for(int i=0; i<n2; i++) {
-    cuda_q2_param.v = (std::complex<double>*)d_q2 + 3*nSites*i;
-    quda_q2.push_back(ColorSpinorField::Create(cuda_q2_param));
-  }
-
-  // Allocate device memory for q3. This is done to ensure a contiguous
-  // chunk of memory is used.
-  const size_t data_q3_bytes = n3 * 3 * nSites * 2 * evec[0]->Precision();
-  void *d_q3 = pool_device_malloc(data_q3_bytes);
-
-  // Create device q3 vectors, aliasing d_q3.
-  ColorSpinorParam cuda_q3_param(cuda_evec_param);
-  cuda_q3_param.create = QUDA_REFERENCE_FIELD_CREATE;
-  std::vector<ColorSpinorField *> quda_q3;
-  for(int i=0; i<n3; i++) {
-    cuda_q3_param.v = (std::complex<double>*)d_q3 + 3*nSites*i;
-    quda_q3.push_back(ColorSpinorField::Create(cuda_q3_param));
-  }
-
-  // Create device diquark vector
-  ColorSpinorParam cuda_diq_param(cuda_evec_param);
-  cuda_diq_param.create = QUDA_ZERO_FIELD_CREATE;
-  std::vector<ColorSpinorField *> quda_diq;
-  quda_diq.push_back(ColorSpinorField::Create(cuda_diq_param));
-
-  // check we are safe to cast into a Complex (= std::complex<double>)
+  // checks and balances
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
-
-  const std::complex<double>* hostCoeffs1Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs1);
-  const std::complex<double>* hostCoeffs2Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs2);
-  const std::complex<double>* hostCoeffs3Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs3);
-  const std::complex<double>* hostMomPtr     = reinterpret_cast<const std::complex<double>*>(host_mom);
-
-  // Make a multiBLAS friendly array for coeffs1 
-  std::vector<Complex> coeffs1(n1*nEv);
-  for(int j=0; j<n1; j++) {
-    for(int i=0; i<nEv; i++) {
-      coeffs1[i*n1 + j] = hostCoeffs1Ptr[i + j*nEv] ;
-    }
+  if( (n1*n2*n3)%blockSizeMomProj != 0 ) {
+    errorQuda( "Block size mom proj needs to divide %d %d\n" , n1*n2*n3 , blockSizeMomProj ) ;
   }
-  
-  // Device side arrays for coeff2 and coeffs3, the momentum array, the return array,
-  // and a temp.
-  const size_t data_coeffs2_bytes = n2 * nEv * 2 * quda_evec[0]->Precision();
-  void *d_coeffs2 = pool_device_malloc(data_coeffs2_bytes);
+  const int nSites = X[0]*X[1]*X[2];
 
-  const size_t data_coeffs3_bytes = n3 * nEv * 2 * quda_evec[0]->Precision();
-  void *d_coeffs3 = pool_device_malloc(data_coeffs3_bytes);
-
-  const size_t data_tmp_bytes = blockSizeMomProj * X[0] * X[1] * X[2] * 2 * quda_q3[0]->Precision();
-  void *d_tmp = pool_device_malloc(data_tmp_bytes);
-
-  const size_t data_ret_bytes = nMom * n1 * n2 * n3 * 2 * quda_q3[0]->Precision();
-  void *d_ret = pool_device_malloc(data_ret_bytes);
-
-  const size_t data_mom_bytes = nMom * nSites * 2 * quda_q3[0]->Precision();
-  void *d_mom = pool_device_malloc(data_mom_bytes);
-
-  getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_INIT);  
-  //--------------------------------------------------------------------------------
-  
-  // Copy host data to device
-  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_H2D);
-
+  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_INIT);
+  lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
+  ColorSpinorParam cpu_evec_param(host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
+  cpu_evec_param.nSpin = 1;
+  std::vector<ColorSpinorField> evec(nEv);
+  for (int iEv=0; iEv<nEv; ++iEv) {
+    cpu_evec_param.v = host_evec[iEv];
+    evec[iEv] = ColorSpinorField(cpu_evec_param) ;
+  }
+  // Create device evecs
+  ColorSpinorParam cuda_evec_param(cpu_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
+  cuda_evec_param.nSpin = 1;
+  cuda_evec_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);
+  std::vector<ColorSpinorField*> quda_evec ;
   for (int i=0; i<nEv; i++) {
-    *quda_evec[i] = *evec[i];
+    quda_evec.push_back( ColorSpinorField::Create(cuda_evec_param) );
+    *quda_evec[i] = evec[i] ; // load here because fuck it why not
   }
-  
-  qudaMemcpy(d_coeffs2, hostCoeffs2Ptr, data_coeffs2_bytes, qudaMemcpyHostToDevice);  
-  qudaMemcpy(d_coeffs3, hostCoeffs3Ptr, data_coeffs3_bytes, qudaMemcpyHostToDevice);  
-  qudaMemcpy(d_mom, hostMomPtr, data_mom_bytes, qudaMemcpyHostToDevice);  
+  // Create q1
+  ColorSpinorParam cuda_q1_param(cuda_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
+  cuda_q1_param.create = QUDA_ZERO_FIELD_CREATE;
+  std::vector<Complex> coeffs1(n1*nEv) ;
+  std::vector<ColorSpinorField*> quda_q1 ;
+  for(int i=0; i<n1; i++) {
+    quda_q1.push_back(ColorSpinorField::Create(cuda_q1_param));
+    for( int j = 0 ; j < nEv ; j++ ) coeffs1[j*n1+i] = host_coeffs1[j+i*nEv] ;
+  }
+  // Create q2
+  ColorSpinorParam cuda_q2_param(cuda_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
+  cuda_q2_param.create = QUDA_ZERO_FIELD_CREATE;
+  std::vector<Complex> coeffs2(n2*nEv) ;
+  std::vector<ColorSpinorField*> quda_q2 ;
+  for(int i=0; i<n2; i++) {
+    quda_q2.push_back(ColorSpinorField::Create(cuda_q2_param));
+    for( int j = 0 ; j < nEv ; j++ ) coeffs2[j*n2+i] = host_coeffs2[j+i*nEv] ;
+  }
+  // create q3
+  ColorSpinorParam cuda_q3_param(cuda_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
+  cuda_q3_param.create = QUDA_ZERO_FIELD_CREATE;
+  std::vector<Complex> coeffs3(n3*nEv) ;
+  std::vector<ColorSpinorField*> quda_q3 ;
+  for(int i=0; i<n3; i++) {
+    quda_q3.push_back(ColorSpinorField::Create(cuda_q3_param));
+    for( int j = 0 ; j < nEv ; j++ ) coeffs3[j*n3+i] = host_coeffs3[j+i*nEv] ;
+  }
+
+  // device temporaries, momentum and return buffers
+  const size_t data_tmp_bytes = blockSizeMomProj*X[0]*X[1]*X[2]*2*quda_q3[0]->Precision();
+  void *d_tmp = pool_device_malloc(data_tmp_bytes);
+  const size_t data_ret_bytes = nMom*n1*n2*n3*2*quda_q3[0]->Precision();
+  void *d_ret = pool_device_malloc(data_ret_bytes);
+  const size_t data_mom_bytes = nMom*nSites*2*quda_q3[0]->Precision();
+  void *d_mom = pool_device_malloc(data_mom_bytes);
+  getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_INIT);  
+
+  // Copy host_mom data to device
+  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_H2D);
+  qudaMemcpy(d_mom, host_mom, data_mom_bytes, qudaMemcpyHostToDevice);  
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_H2D);
 
-  // Construct momenta
-  __complex__ double alpha = 1.0;
-  __complex__ double beta = 0.0;  
-  QudaBLASParam cublas_param_init = newQudaBLASParam();
-  cublas_param_init.trans_a = QUDA_BLAS_OP_N;
-  cublas_param_init.trans_b = QUDA_BLAS_OP_N;
-  cublas_param_init.m = n2;
-  cublas_param_init.n = 3 * nSites;
-  cublas_param_init.k = nEv;
-  cublas_param_init.lda = nEv;
-  cublas_param_init.ldb = 3 * nSites;
-  cublas_param_init.ldc = 3 * nSites;
-  cublas_param_init.a_stride = nEv * nEv;
-  cublas_param_init.b_stride = 3 * nSites * 3 * nSites;
-  cublas_param_init.b_stride = 3 * nSites * 3 * nSites;
-  cublas_param_init.c_offset = 0;
-  cublas_param_init.batch_count = 1;
-  cublas_param_init.alpha = (__complex__ double)alpha;  
-  cublas_param_init.beta  = (__complex__ double)beta;
-  cublas_param_init.data_order = QUDA_BLAS_DATAORDER_ROW;
-  cublas_param_init.data_type = QUDA_BLAS_DATATYPE_Z;
-  cublas_param_init.blas_type = QUDA_BLAS_GEMM ;
- 
+  // Perfrom the caxpy to compute all q-vectors
+  getProfileAccumulateEvecs().TPSTART(QUDA_PROFILE_COMPUTE);
+  quda::blas::legacy::caxpy(coeffs1.data(), quda_evec , quda_q1 ) ;
+  quda::blas::legacy::caxpy(coeffs2.data(), quda_evec , quda_q2 ) ;
+  quda::blas::legacy::caxpy(coeffs3.data(), quda_evec , quda_q3 ) ;
+  getProfileAccumulateEvecs().TPSTOP(QUDA_PROFILE_COMPUTE);
+
+  // evecs irrelevant and can be purged here I gues if we are really desperate for space
+
+  // Create device diquark vector
+  ColorSpinorParam cuda_diq_param( cuda_evec_param , inv_param , QUDA_CUDA_FIELD_LOCATION ) ;
+  ColorSpinorField quda_diq( cuda_diq_param ) ;
+
+  // usual momentum contraction
   QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
   cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
   cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
@@ -208,46 +126,26 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
   cublas_param_mom_sum.lda = nSites;
   cublas_param_mom_sum.ldb = nSites;
   cublas_param_mom_sum.ldc = n1*n2*n3;
-  cublas_param_mom_sum.a_stride = nSites * nSites;
-  cublas_param_mom_sum.c_offset = 0;
   cublas_param_mom_sum.batch_count = 1;
-  cublas_param_mom_sum.alpha = (__complex__ double)alpha;  
-  cublas_param_mom_sum.beta  = (__complex__ double)beta;
+  cublas_param_mom_sum.alpha = 1.0; cublas_param_mom_sum.beta  = 0.0;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
   cublas_param_mom_sum.blas_type = QUDA_BLAS_GEMM ;
-
-  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
-  blas_lapack::native::stridedBatchGEMM(d_coeffs2, d_evec, d_q2, cublas_param_init, QUDA_CUDA_FIELD_LOCATION);
-  cublas_param_init.m = n3;
-  blas_lapack::native::stridedBatchGEMM(d_coeffs3, d_evec, d_q3, cublas_param_init, QUDA_CUDA_FIELD_LOCATION);
-  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
-  
-  // Perfrom the caxpy to compute all q1 vectors
-  getProfileAccumulateEvecs().TPSTART(QUDA_PROFILE_COMPUTE);
-  quda::blas::legacy::caxpy(coeffs1.data(), quda_evec , quda_q1 ) ;
-  getProfileAccumulateEvecs().TPSTOP(QUDA_PROFILE_COMPUTE);
   
   int nInBlock = 0;
-  for (int dil1=0; dil1<n1; dil1++) {
-    for (int dil2=0; dil2<n2; dil2++) {
-
+  for( int dil1=0; dil1<n1; dil1++ ) {
+    for( int dil2=0; dil2<n2; dil2++ ) {
       getProfileColorCross().TPSTART(QUDA_PROFILE_COMPUTE);
-      colorCrossQuda(*quda_q1[dil1], *quda_q2[dil2], *quda_diq[0]);
+      colorCrossQuda(*quda_q1[dil1], *quda_q2[dil2], quda_diq);
       getProfileColorCross().TPSTOP(QUDA_PROFILE_COMPUTE);
       for (int dil3=0; dil3<n3; dil3++) {
 	getProfileColorContract().TPSTART(QUDA_PROFILE_COMPUTE);	
-	colorContractQuda(*quda_diq[0], *quda_q3[dil3], (std::complex<double>*)d_tmp + nSites*nInBlock);
+	colorContractQuda(quda_diq, *quda_q3[dil3], (std::complex<double>*)d_tmp + nSites*nInBlock);
 	getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
 	nInBlock++;
-
-	if (nInBlock == blockSizeMomProj || ((dil1+1 == n1) && (dil2+1 == n2) && (dil3+1 == n3))) {
-	  // To gauge how to block the calls to remove launch latency.
-	  printfQuda("dil1 = %d, dil2 = %d, dil3 = %d, nInBlock = %d\n", dil1, dil2, dil3, nInBlock);
+	if (nInBlock == blockSizeMomProj ) {
 	  cublas_param_mom_sum.n = nInBlock;
 	  cublas_param_mom_sum.c_offset = (dil1*n2 + dil2)*n3 + dil3 - nInBlock + 1;
-          cublas_param_mom_sum.b_stride = nInBlock * nSites;
-          cublas_param_mom_sum.c_stride = nInBlock * nSites;
 	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);	  
 	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret, cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
 	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);	  
@@ -256,153 +154,94 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
       }
     }
   }
-
-  // Copy return array back to host
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_D2H);
-  qudaMemcpy(retArr, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost);  
+  qudaMemcpy(return_array, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost);  
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_D2H);
   
   // Clean up memory allocations
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_FREE);
-  for (int i=0; i<n1; i++) delete quda_q1[i];
-  for (int i=0; i<n2; i++) delete quda_q2[i];
-  for (int i=0; i<n3; i++) delete quda_q3[i];
-
-  for (int i=0; i<nEv; i++) {
-    delete evec[i];
-    delete quda_evec[i];
-  }
-  delete quda_diq[0];
-  pool_device_free(d_coeffs2);
-  pool_device_free(d_q2);
-  pool_device_free(d_coeffs3);
-  pool_device_free(d_q3);
-  pool_device_free(d_evec);
-
+  // I know these are gross but I wanted to use the legacy caxpy
+  for (int i=0; i<n1; i++ ) delete quda_q1[i];
+  for (int i=0; i<n2; i++ ) delete quda_q2[i];
+  for (int i=0; i<n3; i++ ) delete quda_q3[i];
+  for (int i=0; i<nEv; i++) delete quda_evec[i];
   pool_device_free(d_tmp);
   pool_device_free(d_mom);
   pool_device_free(d_ret);
-
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_FREE);
+
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_TOTAL);
 }
 
-// GOOD
-void laphBaryonKernelComputeModeTripletA( const int nMom,
-					  const int nEv,
-					  const int blockSizeMomProj,
+// so I tied an onion to my belt, which was the style at the time
+void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const int blockSizeMomProj,
 					  void **host_evec, 
 					  const double _Complex *host_mom,
-					  double _Complex *return_arr,
+					  QudaInvertParam inv_param,
+					  double _Complex *return_array,
 					  const int X[4])
-{  
+{
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_TOTAL);
+  
+  // important that this only works on spatial nSites
+  const size_t nSites = X[0]*X[1]*X[2];
+  const size_t nEvChoose3 = nEv*(nEv-1)/2*(nEv-2)/3;  
+  // appropriate checks and balances
+  if (sizeof(Complex) != sizeof(double _Complex)) {
+    errorQuda("Irreconcilable difference between interface and internal complex number conventions");
+  }
+  if( nEvChoose3%blockSizeMomProj != 0 ) {
+    errorQuda("Block size mom proj needs to divide %zu %d", nEvChoose3 , blockSizeMomProj);
+  }
+  
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_INIT);
-  
-  QudaInvertParam inv_param = newQudaInvertParam();
-  
-  inv_param.dslash_type = QUDA_WILSON_DSLASH;
-  inv_param.solution_type = QUDA_MAT_SOLUTION;
-  inv_param.solve_type = QUDA_DIRECT_SOLVE;
-  
-  inv_param.cpu_prec = QUDA_DOUBLE_PRECISION;
-  inv_param.cuda_prec = QUDA_DOUBLE_PRECISION;
-  inv_param.dirac_order = QUDA_DIRAC_ORDER;
-  inv_param.gamma_basis = QUDA_DEGRAND_ROSSI_GAMMA_BASIS;
-  
-  inv_param.input_location = QUDA_CPU_FIELD_LOCATION;
-  inv_param.output_location = QUDA_CPU_FIELD_LOCATION;
-
-  const size_t nEvChoose3 = nEv*(nEv-1)/2*(nEv-2)/3;
-
-  // Create host pointers for the data device side objects.
-  //--------------------------------------------------------------------------------
   // Parameter object describing evecs
-  lat_dim_t x ;
-  for( int mu = 0 ; mu < 4 ; mu++ ) x[mu] = X[mu] ;
+  const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
   ColorSpinorParam cpu_evec_param(host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
   cpu_evec_param.nSpin = 1;
-
-  // QUDA style wrapper around the host evecs
-  std::vector<ColorSpinorField*> evec;
-  cpu_evec_param.create = QUDA_REFERENCE_FIELD_CREATE;
-  evec.reserve(nEv);
+  std::vector<ColorSpinorField> evec(nEv) ;
   for (int iEv=0; iEv<nEv; ++iEv) {
     cpu_evec_param.v = host_evec[iEv];
-    evec.push_back(ColorSpinorField::Create(cpu_evec_param));
+    evec[iEv] = ColorSpinorField(cpu_evec_param);
   }
 
-  // Allocate device memory for evecs. This is done to ensure a contiguous
-  // chunk of memory is used.
-  const int nSites = X[0] * X[1] * X[2];
-  const size_t data_evec_bytes = nEv * 3 * nSites * 2 * evec[0]->Precision();
-  void *d_evec = pool_device_malloc(data_evec_bytes);
-
-  // Create device vectors for evecs
-  ColorSpinorParam cuda_evec_param(cpu_evec_param);
-  cuda_evec_param.location = QUDA_CUDA_FIELD_LOCATION;
-  cuda_evec_param.create = QUDA_REFERENCE_FIELD_CREATE;
+  // chuck all the evecs on the GPU
+  ColorSpinorParam cuda_evec_param(cpu_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
   cuda_evec_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);
-  std::vector<ColorSpinorField*> quda_evec;
+  std::vector<ColorSpinorField> quda_evec(nEv);
   for (int i=0; i<nEv; i++) {
-    cuda_evec_param.v = (std::complex<double>*)d_evec + 3*nSites*i;
-    quda_evec.push_back(ColorSpinorField::Create(cuda_evec_param));
+    quda_evec[i] = ColorSpinorField(cuda_evec_param) ;
+    quda_evec[i] = evec[i] ; // CPU -> GPU
   }
   
   // Create device diquark vector
-  ColorSpinorParam cuda_diq_param(cpu_evec_param);
-  cuda_diq_param.location = QUDA_CUDA_FIELD_LOCATION;
-  cuda_diq_param.create = QUDA_ZERO_FIELD_CREATE;
-  std::vector<ColorSpinorField *> quda_diq;
-  quda_diq.push_back(ColorSpinorField::Create(cuda_diq_param));
-  
-  // check we are safe to cast into a Complex (= std::complex<double>)
-  if (sizeof(Complex) != sizeof(double _Complex)) {
-    errorQuda("Irreconcilable difference between interface and internal complex number conventions");
-  }  
-  
-  const std::complex<double>* hostMomPtr = reinterpret_cast<const std::complex<double>*>(host_mom); 
-  std::complex<double>* retArrPtr  = reinterpret_cast<std::complex<double>*>(return_arr); 
-
-  // Device side arrays
-  //-------------------------------------------------------
-  size_t total_bytes = 0;
-  const size_t OneGB = 1024*1024*1024;
+  ColorSpinorParam cuda_diq_param(cpu_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
+  ColorSpinorField quda_diq(cuda_diq_param) ;
   
   // Device side temp array (complBuf in chroma_laph)
-  const size_t data_tmp_bytes = blockSizeMomProj * X[0] * X[1] * X[2] * 2 * quda_evec[0]->Precision();
+  const size_t data_tmp_bytes = blockSizeMomProj*X[0]*X[1]*X[2]*2*quda_evec[0].Precision();
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
-  total_bytes += data_tmp_bytes;
-  printfQuda("d_tmp bytes = %fGB total_bytes = %fGB\n", (double)data_tmp_bytes/(OneGB), (double)total_bytes/(OneGB)); 
 
-  // A second temp array (tmpBuf in chroma_laph) This will be returned for a
-  // globalChunkedSumArray (QDP)
-  const size_t data_ret_bytes = nEvChoose3 * nMom * 2 * quda_evec[0]->Precision();
+  const size_t data_ret_bytes = nEvChoose3*nMom*2*quda_evec[0].Precision();
   void *d_ret = pool_device_malloc(data_ret_bytes);
-  total_bytes += data_ret_bytes;
-  printfQuda("d_ret bytes = %fGB total_bytes = %fGB\n", (double)data_ret_bytes/(OneGB), (double)total_bytes/(OneGB)); 
-  
-  const size_t data_mom_bytes = nMom * nSites * 2 * quda_evec[0]->Precision();
-  void *d_mom = pool_device_malloc(data_mom_bytes);
-  total_bytes += data_mom_bytes;
-  printfQuda("d_mom bytes = %fGB total_bytes = %fGB\n", (double)data_mom_bytes/(OneGB), (double)total_bytes/(OneGB)); 
 
+  const size_t data_mom_bytes = nMom*nSites*2*quda_evec[0].Precision();
+  void *d_mom = pool_device_malloc(data_mom_bytes);
+  if( getVerbosity() >= QUDA_SUMMARIZE ) {
+    const size_t OneGB = 1024*1024*1024;
+    const size_t total_bytes = data_tmp_bytes + data_ret_bytes + data_mom_bytes ;
+    printfQuda("d_tmp %fGB | d_ret %fGB | d_mom %fGB | total = %fGB\n",
+	       (double)data_tmp_bytes/(OneGB), (double)data_ret_bytes/(OneGB),
+	       (double)data_mom_bytes/(OneGB), (double)total_bytes/(OneGB)); 
+  }
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_INIT);
-  //--------------------------------------------------------------------------------
-  std::cout<<"entering laphBaryonKernelA ln427 qudaMemcpy ->"<< data_mom_bytes <<std::endl;
-  
+
   // Copy host data to device
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_H2D);
-  for (int i=0; i<nEv; i++) {
-    *quda_evec[i] = *evec[i];
-  }
-  
-  qudaMemcpy(d_mom, hostMomPtr, data_mom_bytes, qudaMemcpyHostToDevice);  
+  qudaMemcpy(d_mom, host_mom, data_mom_bytes, qudaMemcpyHostToDevice);  
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_H2D);
 
-  __complex__ double alpha = 1.0;
-  __complex__ double beta = 0.0;    
-
+  // idea here like always is to do several ev-blocks at once in a zgemm
   QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
   cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
   cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
@@ -412,157 +251,96 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
   cublas_param_mom_sum.lda = nSites;
   cublas_param_mom_sum.ldb = nSites;
   cublas_param_mom_sum.ldc = nEvChoose3;
-  cublas_param_mom_sum.a_stride = nSites * nSites;
   cublas_param_mom_sum.batch_count = 1;
-  cublas_param_mom_sum.alpha = (__complex__ double)alpha;  
-  cublas_param_mom_sum.beta  = (__complex__ double)beta;
+  cublas_param_mom_sum.alpha = 1.0 ; cublas_param_mom_sum.beta = 0.0 ;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
-    
+
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_TOTAL);
 
   int nInBlock = 0, blockStart = 0;
   for (int aEv=0; aEv<nEv; aEv++) {
     for (int bEv=aEv+1; bEv<nEv; bEv++) {
-
       getProfileColorCross().TPSTART(QUDA_PROFILE_COMPUTE);
-      colorCrossQuda(*quda_evec[aEv], *quda_evec[bEv], *quda_diq[0]);
+      colorCrossQuda(quda_evec[aEv], quda_evec[bEv], quda_diq);
       getProfileColorCross().TPSTOP(QUDA_PROFILE_COMPUTE);
-
       for (int cEv=bEv+1; cEv<nEv; cEv++) {
-	
 	getProfileColorContract().TPSTART(QUDA_PROFILE_COMPUTE);
-	colorContractQuda(*quda_diq[0], *quda_evec[cEv], 
-			  (std::complex<double>*)d_tmp + nSites*nInBlock);
+	colorContractQuda(quda_diq, quda_evec[cEv],(std::complex<double>*)d_tmp + nSites*nInBlock);
 	getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
 	nInBlock++;
-
 	if (nInBlock == blockSizeMomProj) {
-	  // To gauge how to block the calls to remove launch latency.
-	  printfQuda("aEv = %d, bEv = %d, cEv = %d, nInBlock = %d\n", aEv, bEv, cEv, nInBlock);
-	  cublas_param_mom_sum.n = nInBlock;
 	  cublas_param_mom_sum.c_offset = blockStart;
-          cublas_param_mom_sum.b_stride = nSites * nInBlock;
-          cublas_param_mom_sum.c_stride = nEvChoose3 * nInBlock;
 	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
-	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret, cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
-	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);  
+	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret,
+						cublas_param_mom_sum,
+						QUDA_CUDA_FIELD_LOCATION);
+	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
 	  blockStart += nInBlock;
 	  nInBlock = 0;
 	}
       }
     }
   }
-
-  // leftover momentum projection
-  if (nInBlock > 0) {
-    cublas_param_mom_sum.n = nInBlock;
-    cublas_param_mom_sum.c_offset = blockStart;
-    getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);	  
-    blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret, cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
-    getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);	  
-    blockStart = 0;
-    nInBlock = 0;
-  }
-
   // Copy return array back to host
-  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_TOTAL); 
+  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_TOTAL);
+  
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_D2H);
-  qudaMemcpy(retArrPtr, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost);  
+  qudaMemcpy(return_array, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost);  
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_D2H);
   
-  // Clean up memory allocations
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_FREE);
-  for (int i=0; i<nEv; i++) {
-    delete evec[i];
-    delete quda_evec[i];
-  }
-  delete quda_diq[0];
-
-  pool_device_free(d_evec);
   pool_device_free(d_tmp);
   pool_device_free(d_mom);
   pool_device_free(d_ret);
-
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_FREE);
+
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_TOTAL);
 }
 
-// Make this a class, save on malloc and memcopy
-void *d_mtb = nullptr;
-bool mtb_loaded = false;
-
-void laphBaryonKernelComputeModeTripletB( const int n1,
-					  const int n2,
-					  const int n3,
-					  const int nMom,
-					  const int nEv,
+void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int n3,
+					  const int nMom, const int nEv,
 					  const double _Complex *host_coeffs1, 
 					  const double _Complex *host_coeffs2, 
 					  const double _Complex *host_coeffs3,
 					  const double _Complex *host_mode_trip_buf,
-					  double _Complex *host_ret_arr)
+					  double _Complex *return_array)
 {
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_TOTAL);
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT);
-   
+
+  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT); 
   // number of EV indices (in first position) that this rank deals with
   const int nRanks = comm_size();  
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("comm_size() = %d\n", nRanks);
-  fflush(stdout);
   const int nSubEv = nEv / nRanks;
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("nSubEv = %d\n", nSubEv);
-  fflush(stdout);
-  const int iRank = comm_rank();
-
+  const int iRank  = comm_rank();
   // check we are safe to cast into a Complex (= std::complex<double>)
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }  
    
-  const std::complex<double>* hostCoeffs1Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs1);
-  const std::complex<double>* hostCoeffs2Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs2);
-  const std::complex<double>* hostCoeffs3Ptr = reinterpret_cast<const std::complex<double>*>(host_coeffs3);
-  const std::complex<double>* hostModeTripBufPtr = reinterpret_cast<const std::complex<double>*>(host_mode_trip_buf);
-  std::complex<double>* hostRetArrPtr        = reinterpret_cast<std::complex<double>*>(host_ret_arr);
-   
-  // Device side arrays
-  //-------------------------------------------------------
-  // We will define all the array sizes here, then malloc and free
-  // at optimal points in the workflow.
-  size_t total_bytes = 0;
   const size_t OneGB = 1024*1024*1024;
+  const size_t data_coeffs1_bytes = n1*nEv*2*QUDA_DOUBLE_PRECISION;
+  const size_t data_coeffs2_bytes = n2*nEv*2*QUDA_DOUBLE_PRECISION;
+  const size_t data_coeffs3_bytes = n3*nEv*2*QUDA_DOUBLE_PRECISION;  
+  const size_t data_q3_bytes      = nMom*nSubEv*nEv*n3*2*QUDA_DOUBLE_PRECISION;
 
-  const size_t data_coeffs1_bytes = n1 * nEv * 2 * QUDA_DOUBLE_PRECISION;
-  const size_t data_coeffs2_bytes = n2 * nEv * 2 * QUDA_DOUBLE_PRECISION;
-  const size_t data_coeffs3_bytes = n3 * nEv * 2 * QUDA_DOUBLE_PRECISION;
-  
-  const size_t data_mtb_bytes = nMom*nSubEv*nEv*nEv*2*QUDA_DOUBLE_PRECISION;
-
-  const size_t data_q3_bytes = nMom*nSubEv*nEv*n3*2*QUDA_DOUBLE_PRECISION;
-  
-  const size_t data_tmp_bytes = nSubEv * n2 * n3 * 2 * QUDA_DOUBLE_PRECISION;
-  const size_t data_ret_bytes = nMom * n1 * n2 * n3 * 2 * QUDA_DOUBLE_PRECISION;
-  //--------------------------------------------------------------------------------
+  // only create one temp
+  const size_t data_tmp_bytes = std::max( nMom*nSubEv*nEv*nEv,nSubEv*n2*n3)*2*QUDA_DOUBLE_PRECISION ;
+  const size_t data_ret_bytes = nMom*n1*n2*n3*2*QUDA_DOUBLE_PRECISION;
 
   // Allocate required memory
-  if(!mtb_loaded) {
-    total_bytes += data_mtb_bytes;
-    if (getVerbosity() >= QUDA_VERBOSE) printfQuda("mtb bytes = %fGB, total = %fGB\n", (double)data_mtb_bytes/(OneGB), (double)total_bytes/(OneGB));
-    d_mtb = pool_device_malloc(data_mtb_bytes);
-  }
-  total_bytes += data_q3_bytes;  
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("q3 bytes = %fGB, total = %fGB\n", (double)data_q3_bytes/(OneGB), (double)total_bytes/(OneGB));  
-  void *d_q3 = pool_device_malloc(data_q3_bytes);
-
-  total_bytes += data_coeffs3_bytes;
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("coeffs3 bytes = %fGB, total = %fGB\n", (double)data_coeffs3_bytes/(OneGB), (double)total_bytes/(OneGB)); 
+  size_t total_bytes = data_tmp_bytes + data_q3_bytes + data_coeffs3_bytes ;
+  void *d_tmp     = pool_device_malloc(data_tmp_bytes);
+  void *d_q3      = pool_device_malloc(data_q3_bytes);
   void *d_coeffs3 = pool_device_malloc(data_coeffs3_bytes);
-
-  // All cuBLAS use these alpha and beta values
-  __complex__ double alpha = 1.0;
-  __complex__ double beta = 0.0;
-
+  if (getVerbosity() >= QUDA_VERBOSE) {
+    printfQuda("mtb %gGB | q3 %gGB | coeffs3 %gGB | total %gGB\n",
+	       (double)data_tmp_bytes/(OneGB),
+	       (double)data_q3_bytes/(OneGB),
+	       (double)data_coeffs3_bytes/(OneGB),
+	       (double)total_bytes/(OneGB)); 
+  }
+  
   QudaBLASParam cublas_param_1 = newQudaBLASParam();
   cublas_param_1.trans_a = QUDA_BLAS_OP_N;
   cublas_param_1.trans_b = QUDA_BLAS_OP_T;
@@ -572,119 +350,103 @@ void laphBaryonKernelComputeModeTripletB( const int n1,
   cublas_param_1.lda = nEv;
   cublas_param_1.ldb = nEv;
   cublas_param_1.ldc = n3;
-  cublas_param_1.a_stride = nEv * nEv;
-  cublas_param_1.b_stride = nEv * n3;
-  cublas_param_1.c_stride = n3 * n3;
-  cublas_param_1.c_offset = 0;
   cublas_param_1.batch_count = 1;
-  cublas_param_1.alpha = (__complex__ double)alpha;  
-  cublas_param_1.beta  = (__complex__ double)beta;
+  cublas_param_1.alpha = 1.0 ; cublas_param_1.beta = 0.0 ;
   cublas_param_1.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_1.data_type = QUDA_BLAS_DATATYPE_Z;
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_INIT);
 
   // Copy required host data to device
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_H2D);  
-  qudaMemcpy(d_coeffs3, hostCoeffs3Ptr, data_coeffs3_bytes, qudaMemcpyHostToDevice);  
-  if(!mtb_loaded) {
-    qudaMemcpy(d_mtb, hostModeTripBufPtr, data_mtb_bytes, qudaMemcpyHostToDevice);  
-    mtb_loaded = true;
-  }
+  qudaMemcpy(d_coeffs3, host_coeffs3, data_coeffs3_bytes, qudaMemcpyHostToDevice);  
+  qudaMemcpy(d_tmp, host_mode_trip_buf, data_tmp_bytes, qudaMemcpyHostToDevice);  
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_H2D);
 
   // Compute ZGEMM 1:
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_COMPUTE);
-  blas_lapack::native::stridedBatchGEMM(d_mtb, d_coeffs3, d_q3, cublas_param_1, QUDA_CUDA_FIELD_LOCATION);
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("GEMM 1 Success!\n");
+  blas_lapack::native::stridedBatchGEMM(d_tmp, d_coeffs3, d_q3, cublas_param_1,
+					QUDA_CUDA_FIELD_LOCATION);
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_COMPUTE);
    
   // d_coeffs3, d_mtb no longer needed.
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_FREE);
   pool_device_free(d_coeffs3);
-  total_bytes -= data_coeffs3_bytes;
+  total_bytes -= (data_coeffs3_bytes) ;
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_FREE);
    
   // Allocate the rest of the arrays
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT);
-  total_bytes += (data_coeffs1_bytes);
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("coeffs1_arr bytes = %fGB, total = %fGB\n", ((double)data_coeffs1_bytes)/(OneGB), (double)total_bytes/(OneGB));  
+  total_bytes += data_coeffs1_bytes+data_coeffs2_bytes+data_tmp_bytes+data_ret_bytes;
   void *d_coeffs1 = pool_device_malloc(data_coeffs1_bytes);
-   
-  total_bytes += (data_coeffs2_bytes);
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("coeffs2 bytes = %fGB, total = %fGB\n", (double)data_coeffs2_bytes/(OneGB), (double)total_bytes/(OneGB));   
   void *d_coeffs2 = pool_device_malloc(data_coeffs2_bytes);
-
-  total_bytes += (data_tmp_bytes);
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("tmp bytes = %fGB, total = %fGB\n", ((double)data_tmp_bytes)/(OneGB), (double)total_bytes/(OneGB));   
-  void *d_tmp = pool_device_malloc(data_tmp_bytes);
-   
-  total_bytes += data_ret_bytes;
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("ret bytes = %fGB, total = %fGB\n", (double)data_ret_bytes/(OneGB), (double)total_bytes/(OneGB));  
   void *d_ret = pool_device_malloc(data_ret_bytes);  
+  if (getVerbosity() >= QUDA_VERBOSE) {
+    printfQuda("coeffs1 %gGB | coeffs2 %gGB | ret %gGB | total %gGB\n",
+	       (double)data_coeffs1_bytes/OneGB,
+	       (double)data_coeffs2_bytes/OneGB,
+	       (double)data_ret_bytes/OneGB,
+	       (double)total_bytes/OneGB);
+  }
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_INIT);
 
   // Copy host data to device
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_H2D);  
-  qudaMemcpy(d_coeffs1, hostCoeffs1Ptr, data_coeffs1_bytes, qudaMemcpyHostToDevice);  
-  qudaMemcpy(d_coeffs2, hostCoeffs2Ptr, data_coeffs2_bytes, qudaMemcpyHostToDevice);  
+  qudaMemcpy(d_coeffs1, host_coeffs1, data_coeffs1_bytes, qudaMemcpyHostToDevice);  
+  qudaMemcpy(d_coeffs2, host_coeffs2, data_coeffs2_bytes, qudaMemcpyHostToDevice);  
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_H2D);
 
   // Initialise teh final ZGEMMs
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT);
   QudaBLASParam cublas_param_2 = newQudaBLASParam();
-  cublas_param_2.trans_a = QUDA_BLAS_OP_N;
-  cublas_param_2.trans_b = QUDA_BLAS_OP_N;
+  cublas_param_2.trans_a = cublas_param_2.trans_b = QUDA_BLAS_OP_N;
   cublas_param_2.m = n2;
   cublas_param_2.n = n3;
   cublas_param_2.k = nEv;
   cublas_param_2.lda = nEv;
   cublas_param_2.ldb = n3;
   cublas_param_2.ldc = n3;
-  cublas_param_2.a_stride = 0; // Instruct cuBLAS to use the only the data in d_coeffs2 (single batch sized array)
-  cublas_param_2.b_stride = n3 * n3;
-  cublas_param_2.c_stride = n3 * n3;
-  cublas_param_2.batch_count = nSubEv;
-  cublas_param_2.alpha = (__complex__ double)alpha;  
-  cublas_param_2.beta  = (__complex__ double)beta;
+  cublas_param_2.batch_count = 1 ;
+  cublas_param_2.alpha = 1.0 ; cublas_param_2.beta = 0.0 ;
   cublas_param_2.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_2.data_type = QUDA_BLAS_DATATYPE_Z;
 
   QudaBLASParam cublas_param_3 = newQudaBLASParam();
-  cublas_param_3.trans_a = QUDA_BLAS_OP_N;
-  cublas_param_3.trans_b = QUDA_BLAS_OP_N;
+  cublas_param_3.trans_a = cublas_param_3.trans_b = QUDA_BLAS_OP_N;
   cublas_param_3.m = n1;
   cublas_param_3.n = n2*n3;
   cublas_param_3.k = nSubEv;
   cublas_param_3.lda = nEv;
   cublas_param_3.ldb = n2*n3;
-  cublas_param_3.ldc = n2*n3;   
-  cublas_param_3.a_stride = 0; // Instruct cuBLAS to use the only the data in d_coeffs1 (single batch sized array) 
-  cublas_param_3.b_stride = n2*n3 * n2*n3;
-  cublas_param_3.c_stride = n2*n3 * n2*n3;
+  cublas_param_3.ldc = n2*n3;
   cublas_param_3.batch_count = 1;
-  cublas_param_3.alpha = (__complex__ double)alpha;  
-  cublas_param_3.beta  = (__complex__ double)beta;
+  cublas_param_3.alpha = 1.0 ; cublas_param_3.beta = 0.0 ;
   cublas_param_3.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_3.data_type = QUDA_BLAS_DATATYPE_Z;
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_INIT);
 
+  // flush this guy
+  qudaMemset( d_tmp , 0 , data_tmp_bytes ) ;
+  
   // Compute ZGEMMs
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_COMPUTE);   
-  for(int i=0; i<nMom; i++) {
-    cublas_param_2.b_offset = i * nSubEv * nEv * n3;
-    blas_lapack::native::stridedBatchGEMM(d_coeffs2, d_q3, d_tmp, cublas_param_2, QUDA_CUDA_FIELD_LOCATION);
-    cublas_param_3.a_offset = iRank * nSubEv;
-    cublas_param_3.c_offset = i * n1 * n2 * n3;
-    blas_lapack::native::stridedBatchGEMM(d_coeffs1, d_tmp, d_ret, cublas_param_3, QUDA_CUDA_FIELD_LOCATION);
+  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_COMPUTE);  
+  for(int p=0; p<nMom; p++) {
+    // this can be batched by Ev but I don't follow the interface
+    for( int j = 0 ; j < nSubEv ; j++ ) {
+      blas_lapack::native::stridedBatchGEMM( d_coeffs2,
+					     (double _Complex*)d_q3 + j*n3*nEv + p*n3*nEv*nEv ,
+					     (double _Complex*)d_tmp + j*n2*n3,
+					     cublas_param_2, QUDA_CUDA_FIELD_LOCATION);
+    }
+    cublas_param_3.a_offset = iRank*nSubEv;
+    cublas_param_3.c_offset = p*n1*n2*n3;
+    blas_lapack::native::stridedBatchGEMM(d_coeffs1, d_tmp, d_ret,
+					  cublas_param_3, QUDA_CUDA_FIELD_LOCATION);
   }
-  if (getVerbosity() >= QUDA_VERBOSE) printfQuda("GEMM 2+3 Success!\n");  
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_COMPUTE);
-   
-  // Copy return array to host
+  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_COMPUTE); 
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_D2H);
-  qudaMemcpy(hostRetArrPtr, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost);  
+  qudaMemcpy(return_array, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost);  
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_D2H);
-      
+
   // Clean up all remaining memory allocations
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_FREE);
   pool_device_free(d_coeffs1);
@@ -695,201 +457,115 @@ void laphBaryonKernelComputeModeTripletB( const int n1,
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_FREE);
 
   saveTuneCache();
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_TOTAL);  
+  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_TOTAL);
 }
 
-void laphBaryonKernelComputeModeTripletEnd() {   
-  if(mtb_loaded) pool_device_free(d_mtb);
-  saveTuneCache();
-}
-
-void laphCurrentKernel( const int n1,
-			const int n2,
-			const int n_mom,
+// new GPU interface with better behaviour
+void laphCurrentKernel( const int n1, const int n2, const int nMom,
 			const int block_size_mom_proj,
 			void **host_quark,
 			void **host_quark_bar,
 			const double _Complex *host_mom,
-			void *ret_arr,
+			QudaInvertParam inv_param,
+			void *return_array,
 			const int X[4])
-{  
+{
   getProfileCurrentKernel().TPSTART(QUDA_PROFILE_TOTAL);
-  getProfileCurrentKernel().TPSTART(QUDA_PROFILE_INIT);
-  
+
+  getProfileCurrentKernel().TPSTART(QUDA_PROFILE_INIT);  
   // Check we are safe to cast into a Complex (= std::complex<double>)
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
 
-  // wait a fucking minute, host_mom is an integer!!! This is just wrong.
-  const std::complex<double>* host_mom_ptr = reinterpret_cast<const std::complex<double>*>(host_mom);
-  
-  QudaInvertParam inv_param = newQudaInvertParam();
-  inv_param.dslash_type = QUDA_WILSON_DSLASH;
-  inv_param.solution_type = QUDA_MAT_SOLUTION;
-  inv_param.solve_type = QUDA_DIRECT_SOLVE;
-  inv_param.cpu_prec = QUDA_DOUBLE_PRECISION;
-  inv_param.cuda_prec = QUDA_DOUBLE_PRECISION;
-  inv_param.dirac_order = QUDA_DIRAC_ORDER;
-  inv_param.input_location = QUDA_CPU_FIELD_LOCATION;
-  inv_param.output_location = QUDA_CPU_FIELD_LOCATION;
-
   // Some common variables
-  const size_t n_color = 3;
-  const size_t n_spatial_sites = X[0] * X[1] * X[2];
-  const size_t n_sites = n_spatial_sites * X[3];
+  const size_t n_spatial_sites = X[0]*X[1]*X[2];
+  const size_t n_sites = n_spatial_sites*X[3];
   const QudaPrecision precision = QUDA_DOUBLE_PRECISION;
-  
-  // Create host pointers for the data device side objects.
-  //--------------------------------------------------------------------------------
-  // Parameter object describing quark
   const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
-  ColorSpinorParam cpu_quark_param(host_quark, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
-  cpu_quark_param.nSpin = 1;
-  
-  // QUDA style wrapper around the host quark
-  std::vector<ColorSpinorField*> quark;
-  cpu_quark_param.create = QUDA_REFERENCE_FIELD_CREATE;
-  quark.reserve(n2);
-  for (int i=0; i<n2; i++) {
-    cpu_quark_param.v = host_quark[i];
-    quark.push_back(ColorSpinorField::Create(cpu_quark_param));
-  }
-
-  // Allocate device memory for quark. This is done to ensure a contiguous
-  // chunk of memory is used.
-  // vectors * colours * spatial sites * complex * precision
-  const size_t data_quark_bytes = n2 * n_color * n_sites * 2 * precision;
-  void *d_quark = pool_device_malloc(data_quark_bytes);
 
   // Create device vectors for quarks
-  ColorSpinorParam cuda_quark_param(cpu_quark_param);
-  cuda_quark_param.location = QUDA_CUDA_FIELD_LOCATION;
-  cuda_quark_param.create = QUDA_REFERENCE_FIELD_CREATE;
-  cuda_quark_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);
-  std::vector<ColorSpinorField *> quda_quark;
-  for (int i=0; i<n2; i++) {
-    cuda_quark_param.v = (std::complex<double>*)d_quark + n_color*n_sites*i;
-    quda_quark.push_back(ColorSpinorField::Create(cuda_quark_param));
+  ColorSpinorParam cpu_quark_param(host_quark, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
+  cpu_quark_param.nSpin = 1;
+  std::vector<ColorSpinorField> quark(n2) ;
+  for( int dil2 = 0 ; dil2 < n2 ; dil2++ ) {
+    cpu_quark_param.v = host_quark[dil2] ;
+    quark[dil2] = ColorSpinorField(cpu_quark_param) ;
   }
-
-  // Repeat for quark_bar
+  ColorSpinorParam cuda_quark_param(cpu_quark_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
+  cuda_quark_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);
+  
+  // Create device vectors for quark_bar
   ColorSpinorParam cpu_quark_bar_param(host_quark_bar, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
   cpu_quark_bar_param.nSpin = 1;
-  
-  // QUDA style wrapper around the host quark_bar
-  std::vector<ColorSpinorField*> quark_bar;
-  cpu_quark_bar_param.create = QUDA_REFERENCE_FIELD_CREATE;
-  quark_bar.reserve(n1);
-  for (int i=0; i<n1; i++) {
-    cpu_quark_bar_param.v = host_quark_bar[i];
-    quark_bar.push_back(ColorSpinorField::Create(cpu_quark_bar_param));
-  }
-
-  // Allocate device memory for quark_bar. This is done to ensure a contiguous
-  // chunk of memory is used.
-  // vectors * colours * spatial sites * complex * precision
-  const size_t data_quark_bar_bytes = n1 * n_color * n_sites * 2 * precision;
-  void *d_quark_bar = pool_device_malloc(data_quark_bar_bytes);
-
-  // Create device vectors for quark_bar
-  ColorSpinorParam cuda_quark_bar_param(cpu_quark_bar_param);
-  cuda_quark_bar_param.location = QUDA_CUDA_FIELD_LOCATION;
-  cuda_quark_bar_param.create = QUDA_REFERENCE_FIELD_CREATE;
+  ColorSpinorParam cuda_quark_bar_param(cpu_quark_bar_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
   cuda_quark_bar_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);
-  std::vector<ColorSpinorField *> quda_quark_bar;
-  for (int i=0; i<n1; i++) {
-    cuda_quark_bar_param.v = (std::complex<double>*)d_quark_bar + n_color*n_sites*i;
-    quda_quark_bar.push_back(ColorSpinorField::Create(cuda_quark_bar_param));
-  }
   
   // Device array to hold the entire return array
-  const size_t data_ret_bytes = n_mom * X[3] * n1 * n2 * 2 * precision;
+  const size_t data_ret_bytes = nMom*X[3]*n1*n2*2*precision;
   void *d_ret = pool_device_malloc(data_ret_bytes);
 
   // Device array to hold the inner product
-  const size_t data_tmp_bytes = block_size_mom_proj * n_sites * 2 * precision;
+  const size_t data_tmp_bytes = n_sites*2*precision;
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
 
   // Device array to hold the momentum
-  const size_t data_mom_bytes = n_mom * n_spatial_sites * 2 * precision;
+  const size_t data_mom_bytes = nMom*n_spatial_sites*2*precision;
   void *d_mom = pool_device_malloc(data_mom_bytes);
-
-  __complex__ double alpha = 1.0 , beta = 0.0;
+  
   QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
   cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
   cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
-
-  // going to be doing A.B where A is the host_mom array of length
-  // nmom x nsites | nsites x T
-  // output is an n_mom x X[3] matrix
-  cublas_param_mom_sum.m = n_mom ; // # of rows of A -> mom list
-  cublas_param_mom_sum.lda = n_spatial_sites ; // # of cols of A == L^3
-  
-  cublas_param_mom_sum.n = X[3] ; // # of rows of (B)^T which is time in lexi order
-  cublas_param_mom_sum.ldb = n_spatial_sites ; // #of rows of B == L^3
-  
-  cublas_param_mom_sum.k   = n_spatial_sites ; // should be lda and ldb
-
+  cublas_param_mom_sum.m = nMom ;
+  cublas_param_mom_sum.n = X[3] ;
+  cublas_param_mom_sum.k   = n_spatial_sites ;
+  cublas_param_mom_sum.lda = n_spatial_sites ;
+  cublas_param_mom_sum.ldb = n_spatial_sites ;
   cublas_param_mom_sum.ldc = X[3] ;
-
-  cublas_param_mom_sum.batch_count = 1;
-  cublas_param_mom_sum.alpha = (__complex__ double)alpha;  
-  cublas_param_mom_sum.beta  = (__complex__ double)beta;
+  cublas_param_mom_sum.batch_count = 1 ;
+  cublas_param_mom_sum.alpha = 1.0; cublas_param_mom_sum.beta = 0.0;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
-
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_INIT);
-  //--------------------------------------------------------------------------------
-
+  
   // Copy host data to device
   getProfileCurrentKernel().TPSTART(QUDA_PROFILE_H2D);
-
-  // wasteful pull to device here
-  for (int i=0; i<n2; i++) *quda_quark[i] = *quark[i];
-  for (int i=0; i<n1; i++) *quda_quark_bar[i] = *quark_bar[i];
-  // For the moment, use the chroma_laph defined momenta, then compute on host
-  qudaMemcpy(d_mom, host_mom_ptr, data_mom_bytes, qudaMemcpyHostToDevice);  
+  std::vector<ColorSpinorField> quda_quark(n2) ;
+  for (int dil2=0; dil2<n2; dil2++) {
+    quda_quark[dil2] = ColorSpinorField(cuda_quark_param) ;
+    quda_quark[dil2] = quark[dil2] ;
+  }
+  qudaMemcpy(d_mom, host_mom, data_mom_bytes, qudaMemcpyHostToDevice);  
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_H2D);
 
   // doing too much work here as (di1,dil2) == (dil2,dil1)*
   for (int dil1=0; dil1<n1; dil1++) {
-    for (int dil2=0; dil2<n2; dil2++) {
-      
+    cpu_quark_bar_param.v = host_quark_bar[dil1] ;
+    ColorSpinorField quark_bar(cpu_quark_bar_param) ;
+    ColorSpinorField quda_quark_bar(cuda_quark_bar_param) ;
+    quda_quark_bar = quark_bar ;
+    // just block dil2
+    for (int dil2=0; dil2<n2; dil2++){
       getProfileCurrentKernel().TPSTART(QUDA_PROFILE_COMPUTE);
-      innerProductQuda(*quda_quark_bar[dil1], *quda_quark[dil2], (std::complex<double>*)d_tmp);
+      innerProductQuda( quda_quark_bar, quda_quark[dil2], d_tmp );
       getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_COMPUTE);
-
-      // want a simple GEMM version for testing and expand it for striding and batching when I can be fucked
       getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
-      blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp,
-					    (std::complex<double>*)d_ret+(dil2+n2*dil1)*X[3]*n_mom,
-					    cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
-      getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+      blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp,
+					     (std::complex<double>*)d_ret+(dil2+n2*dil1)*X[3]*nMom,
+					     cublas_param_mom_sum,
+					     QUDA_CUDA_FIELD_LOCATION);
+      getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE); 
     }
   }
-  
   // Copy device data back to host
-  qudaMemcpy(ret_arr, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost) ;
+  qudaMemcpy(return_array, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost) ;
   
   // Clean up memory allocations
   getProfileCurrentKernel().TPSTART(QUDA_PROFILE_FREE);
-  for (int i=0; i<n1; i++) {
-    delete quda_quark[i];
-    delete quark[i];
-  }
-
-  for (int i=0; i<n2; i++) {
-    delete quda_quark_bar[i];
-    delete quark_bar[i];
-  }
-
-  pool_device_free(d_quark);
-  pool_device_free(d_quark_bar);
   pool_device_free(d_ret);
   pool_device_free(d_tmp);
   pool_device_free(d_mom);
-  
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_FREE);
+
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_TOTAL);
 }

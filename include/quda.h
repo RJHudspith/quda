@@ -1876,51 +1876,96 @@ extern "C" {
   void laphSinkProject(double _Complex *host_sinks, void **host_quark, int n_quark, int tile_quark,
                        void **host_evec, int nevec, int tile_evec, QudaInvertParam *inv_param, const int X[4]);
 
-  // expose functions from interface/slaph_interface.cpp
-  void laphBaryonKernel( const int n1,
-			 const int n2,
-			 const int n3,
-			 const int nMom,
+  /**
+   * @brief computes the laphBaryonKernel
+   * @param[in] n1 number of dilutions for q1
+   * @param[in] n2 number of dilutions for q2
+   * @param[in] n3 number of dilutions for q3
+   * @param[in] nMom number of momenta
+   * @param[in] host_coeffs1
+   * @param[in] host_coeffs2
+   * @param[in] host_coeffs3
+   * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
+   * @param[in] nEv the number of eigenmodes
+   * @param[in] host_evec the eigenvectors on the host
+   * @param[in] inv_param Quda Inversion parameters
+   * @param[out] the returned DFTed array
+   * @param[in] blockSizeMomProj the factor that divides n1.n2.n3 to batch the DFT
+   * @param[in] X Lattice dimensions
+   */
+  void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
 			 const double _Complex *host_coeffs1,
 			 const double _Complex *host_coeffs2,
 			 const double _Complex *host_coeffs3,
 			 const double _Complex *host_mom,
 			 const int nEv,
 			 void **host_evec,
-			 void *retArr,
+			 QudaInvertParam inv_param,
+			 void *return_array,
 			 const int blockSizeMomProj,
 			 const int X[4] ) ;
 
-  void laphBaryonKernelComputeModeTripletA( const int nMom,
-					    const int nEv,
+  /**
+   * @brief computes the laph baryon Mode Triplets
+   * @param[in] nMom number of momenta
+   * @param[in] nEv the number of laph eigenvectors
+   * @param[in] blockSizeMomProj the factor that divides nEv*(nEv-1)*(nEv-2)/6 to batch the DFT
+   * @param[in] host_evec the eigenvectors on the host
+   * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
+   * @param[in] inv_param Quda Inversion parameters
+   * @param[out] the returned DFTd triplet
+   * @param[in] X Lattice dimensions
+   */  
+  void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv,
 					    const int block_size_mom_proj,
 					    void **host_evec, 
 					    const double _Complex *host_mom,
+					    QudaInvertParam inv_param,
 					    double _Complex *return_array,
 					    const int X[4] );  
-  
-  void laphBaryonKernelComputeModeTripletB( const int n1,
-					    const int n2,
-					    const int n3,
-					    const int n_mom,
-					    const int n_ev, 
+
+  /**
+   * @brief "B" version of the triplet
+   * @param[in] n1 number of dilutions for q1
+   * @param[in] n2 number of dilutions for q2
+   * @param[in] n3 number of dilutions for q3
+   * @param[in] nMom number of momenta
+   * @param[in] nEv the number of eigenmodes
+   * @param[in] host_coeffs1
+   * @param[in] host_coeffs2
+   * @param[in] host_coeffs3
+   * @param[in] host_mode_trip_buf triplet buffer array
+   * @param[out] return_array the returned DFTed array
+   */
+  void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int n3,
+					    const int nMom, const int nEv, 
 					    const double _Complex *host_coeffs1, 
 					    const double _Complex *host_coeffs2, 
 					    const double _Complex *host_coeffs3,
 					    const double _Complex *host_mode_trip_buf, 
 					    double _Complex *return_array);
 
-  void laphCurrentKernel( const int n1,
-			  const int n2,
-			  const int n_mom,
+  /**
+   * @brief computes the laphBaryonKernel
+   * @param[in] n1 number of dilutions for q1
+   * @param[in] n2 number of dilutions for q2
+   * @param[in] nMom number of momenta
+   * @param[in] blockSizeMomProj the factor that divides n1.n2 to batch the DFT
+   * @param[in] host_quark the quark (sans spin indices) for the | >
+   * @param[in] host_quark_bar the quark (sans spin indices, should not be conjugated) for the < |
+   * @param[in] inv_param Quda Inversion parameters
+   * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
+   * @param[out] the returned DFTed array
+   * @param[in] X Lattice dimensions
+   */
+  void laphCurrentKernel( const int n1, const int n2, const int nMom,
 			  const int block_size_mom_proj,
 			  void **host_quark, 
 			  void **host_quark_bar, 
-			  const double _Complex *host_mom, 
-			  void *ret_array,
+			  const double _Complex *host_mom,
+			  QudaInvertParam inv_param,
+			  void *return_array,
 			  const int X[4] );
-
-  void laphBaryonKernelComputeModeTripletEnd();
 
 #ifdef __cplusplus
 }
