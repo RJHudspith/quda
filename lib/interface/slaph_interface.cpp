@@ -9,9 +9,6 @@
 
 using namespace quda;
 
-// Forward declarations for profiling and parameter checking
-// The helper functions are defined in interface_quda.cpp
-//void checkBLASParam(QudaBLASParam &param);
 TimeProfile &getProfileBaryonKernel();
 TimeProfile &getProfileBaryonKernelModeTripletsA();
 TimeProfile &getProfileBaryonKernelModeTripletsB();
@@ -20,6 +17,8 @@ TimeProfile &getProfileColorContract();
 TimeProfile &getProfileColorCross();
 TimeProfile &getProfileBLAS();
 TimeProfile &getProfileCurrentKernel();
+
+static const double OneGB = 1024.*1024.*1024.;
 
 void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
 		       const double _Complex *host_coeffs1, 
@@ -92,10 +91,10 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
 
   // device temporaries, momentum and return buffers
   const size_t data_tmp_bytes = blockSizeMomProj*X[0]*X[1]*X[2]*2*quda_q3[0]->Precision();
-  void *d_tmp = pool_device_malloc(data_tmp_bytes);
   const size_t data_ret_bytes = nMom*n1*n2*n3*2*quda_q3[0]->Precision();
-  void *d_ret = pool_device_malloc(data_ret_bytes);
   const size_t data_mom_bytes = nMom*nSites*2*quda_q3[0]->Precision();
+  void *d_tmp = pool_device_malloc(data_tmp_bytes);
+  void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_INIT);  
 
@@ -220,19 +219,16 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
   
   // Device side temp array (complBuf in chroma_laph)
   const size_t data_tmp_bytes = blockSizeMomProj*X[0]*X[1]*X[2]*2*quda_evec[0].Precision();
-  void *d_tmp = pool_device_malloc(data_tmp_bytes);
-
   const size_t data_ret_bytes = nEvChoose3*nMom*2*quda_evec[0].Precision();
-  void *d_ret = pool_device_malloc(data_ret_bytes);
-
   const size_t data_mom_bytes = nMom*nSites*2*quda_evec[0].Precision();
+  void *d_tmp = pool_device_malloc(data_tmp_bytes);
+  void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
   if( getVerbosity() >= QUDA_SUMMARIZE ) {
-    const size_t OneGB = 1024*1024*1024;
-    const size_t total_bytes = data_tmp_bytes + data_ret_bytes + data_mom_bytes ;
+    const size_t total_bytes = data_tmp_bytes+data_ret_bytes+data_mom_bytes ;
     printfQuda("d_tmp %fGB | d_ret %fGB | d_mom %fGB | total = %fGB\n",
-	       (double)data_tmp_bytes/(OneGB), (double)data_ret_bytes/(OneGB),
-	       (double)data_mom_bytes/(OneGB), (double)total_bytes/(OneGB)); 
+	       data_tmp_bytes/OneGB, data_ret_bytes/OneGB,
+	       data_mom_bytes/OneGB, total_bytes/OneGB); 
   }
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_INIT);
 
@@ -255,8 +251,6 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
   cublas_param_mom_sum.alpha = 1.0 ; cublas_param_mom_sum.beta = 0.0 ;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
-
-  getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_TOTAL);
 
   int nInBlock = 0, blockStart = 0;
   for (int aEv=0; aEv<nEv; aEv++) {
@@ -282,9 +276,7 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
       }
     }
   }
-  // Copy return array back to host
-  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_TOTAL);
-  
+  // Copy return array back to host  
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_D2H);
   qudaMemcpy(return_array, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost);  
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_D2H);
@@ -317,34 +309,36 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }  
-   
-  const size_t OneGB = 1024*1024*1024;
+
   const size_t data_coeffs1_bytes = n1*nEv*2*QUDA_DOUBLE_PRECISION;
   const size_t data_coeffs2_bytes = n2*nEv*2*QUDA_DOUBLE_PRECISION;
   const size_t data_coeffs3_bytes = n3*nEv*2*QUDA_DOUBLE_PRECISION;  
-  const size_t data_q3_bytes      = nMom*nSubEv*nEv*n3*2*QUDA_DOUBLE_PRECISION;
-
-  // only create one temp
-  const size_t data_tmp_bytes = std::max( nMom*nSubEv*nEv*nEv,nSubEv*n2*n3)*2*QUDA_DOUBLE_PRECISION ;
-  const size_t data_ret_bytes = nMom*n1*n2*n3*2*QUDA_DOUBLE_PRECISION;
+  const size_t data_q3_bytes      = nSubEv*nEv*n3*2*QUDA_DOUBLE_PRECISION;
+  const size_t data_tmp_bytes     = std::max( nSubEv*nEv*nEv , nSubEv*n2*n3 )*2*QUDA_DOUBLE_PRECISION ;
+  const size_t data_ret_bytes     = nMom*n1*n2*n3*2*QUDA_DOUBLE_PRECISION;
+  const size_t total_bytes = data_tmp_bytes + data_q3_bytes + data_coeffs3_bytes \
+    +data_coeffs1_bytes + data_coeffs2_bytes + data_tmp_bytes + data_ret_bytes;
 
   // Allocate required memory
-  size_t total_bytes = data_tmp_bytes + data_q3_bytes + data_coeffs3_bytes ;
   void *d_tmp     = pool_device_malloc(data_tmp_bytes);
   void *d_q3      = pool_device_malloc(data_q3_bytes);
+  void *d_coeffs1 = pool_device_malloc(data_coeffs1_bytes);
+  void *d_coeffs2 = pool_device_malloc(data_coeffs2_bytes);
   void *d_coeffs3 = pool_device_malloc(data_coeffs3_bytes);
+  void *d_ret     = pool_device_malloc(data_ret_bytes);  
   if (getVerbosity() >= QUDA_VERBOSE) {
-    printfQuda("mtb %gGB | q3 %gGB | coeffs3 %gGB | total %gGB\n",
-	       (double)data_tmp_bytes/(OneGB),
-	       (double)data_q3_bytes/(OneGB),
-	       (double)data_coeffs3_bytes/(OneGB),
-	       (double)total_bytes/(OneGB)); 
+    printfQuda("mtb %gGB | q3 %gGB | coeffs3 %gGB \n",
+	       data_tmp_bytes/OneGB, data_q3_bytes/OneGB, data_coeffs3_bytes/OneGB,
+	       "coeffs1 %gGB | coeffs2 %gGB | ret %gGB | total %gGB\n",
+	       data_coeffs1_bytes/OneGB, data_coeffs2_bytes/OneGB,
+	       data_ret_bytes/OneGB, total_bytes/OneGB);
   }
-  
+
+  // Initialise all the ZGEMMS
   QudaBLASParam cublas_param_1 = newQudaBLASParam();
   cublas_param_1.trans_a = QUDA_BLAS_OP_N;
   cublas_param_1.trans_b = QUDA_BLAS_OP_T;
-  cublas_param_1.m = nMom*nSubEv*nEv;
+  cublas_param_1.m = nSubEv*nEv;
   cublas_param_1.n = n3;
   cublas_param_1.k = nEv;
   cublas_param_1.lda = nEv;
@@ -354,49 +348,7 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   cublas_param_1.alpha = 1.0 ; cublas_param_1.beta = 0.0 ;
   cublas_param_1.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_1.data_type = QUDA_BLAS_DATATYPE_Z;
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_INIT);
 
-  // Copy required host data to device
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_H2D);  
-  qudaMemcpy(d_coeffs3, host_coeffs3, data_coeffs3_bytes, qudaMemcpyHostToDevice);  
-  qudaMemcpy(d_tmp, host_mode_trip_buf, data_tmp_bytes, qudaMemcpyHostToDevice);  
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_H2D);
-
-  // Compute ZGEMM 1:
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_COMPUTE);
-  blas_lapack::native::stridedBatchGEMM(d_tmp, d_coeffs3, d_q3, cublas_param_1,
-					QUDA_CUDA_FIELD_LOCATION);
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_COMPUTE);
-   
-  // d_coeffs3, d_mtb no longer needed.
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_FREE);
-  pool_device_free(d_coeffs3);
-  total_bytes -= (data_coeffs3_bytes) ;
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_FREE);
-   
-  // Allocate the rest of the arrays
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT);
-  total_bytes += data_coeffs1_bytes+data_coeffs2_bytes+data_tmp_bytes+data_ret_bytes;
-  void *d_coeffs1 = pool_device_malloc(data_coeffs1_bytes);
-  void *d_coeffs2 = pool_device_malloc(data_coeffs2_bytes);
-  void *d_ret = pool_device_malloc(data_ret_bytes);  
-  if (getVerbosity() >= QUDA_VERBOSE) {
-    printfQuda("coeffs1 %gGB | coeffs2 %gGB | ret %gGB | total %gGB\n",
-	       (double)data_coeffs1_bytes/OneGB,
-	       (double)data_coeffs2_bytes/OneGB,
-	       (double)data_ret_bytes/OneGB,
-	       (double)total_bytes/OneGB);
-  }
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_INIT);
-
-  // Copy host data to device
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_H2D);  
-  qudaMemcpy(d_coeffs1, host_coeffs1, data_coeffs1_bytes, qudaMemcpyHostToDevice);  
-  qudaMemcpy(d_coeffs2, host_coeffs2, data_coeffs2_bytes, qudaMemcpyHostToDevice);  
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_H2D);
-
-  // Initialise teh final ZGEMMs
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT);
   QudaBLASParam cublas_param_2 = newQudaBLASParam();
   cublas_param_2.trans_a = cublas_param_2.trans_b = QUDA_BLAS_OP_N;
   cublas_param_2.m = n2;
@@ -424,16 +376,26 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   cublas_param_3.data_type = QUDA_BLAS_DATATYPE_Z;
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_INIT);
 
-  // flush this guy
-  qudaMemset( d_tmp , 0 , data_tmp_bytes ) ;
+  // Copy coeffs to device
+  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_H2D);
+  qudaMemcpy(d_coeffs3, host_coeffs3, data_coeffs3_bytes, qudaMemcpyHostToDevice);
+  qudaMemcpy(d_coeffs1, host_coeffs1, data_coeffs1_bytes, qudaMemcpyHostToDevice);  
+  qudaMemcpy(d_coeffs2, host_coeffs2, data_coeffs2_bytes, qudaMemcpyHostToDevice);  
+  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_H2D);
   
   // Compute ZGEMMs
-  getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_COMPUTE);  
   for(int p=0; p<nMom; p++) {
+    getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_H2D);
+    qudaMemcpy( d_tmp, (double _Complex*)host_mode_trip_buf+p*nSubEv*nEv*nEv ,
+		data_tmp_bytes, qudaMemcpyHostToDevice ) ;
+    getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_H2D);
+    getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_COMPUTE);  
+    blas_lapack::native::stridedBatchGEMM( d_tmp, d_coeffs3, d_q3, cublas_param_1,
+                                           QUDA_CUDA_FIELD_LOCATION ) ;
     // this can be batched by Ev but I don't follow the interface
     for( int j = 0 ; j < nSubEv ; j++ ) {
       blas_lapack::native::stridedBatchGEMM( d_coeffs2,
-					     (double _Complex*)d_q3 + j*n3*nEv + p*n3*nEv*nEv ,
+					     (double _Complex*)d_q3 + j*n3*nEv,
 					     (double _Complex*)d_tmp + j*n2*n3,
 					     cublas_param_2, QUDA_CUDA_FIELD_LOCATION);
     }
@@ -441,8 +403,8 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
     cublas_param_3.c_offset = p*n1*n2*n3;
     blas_lapack::native::stridedBatchGEMM(d_coeffs1, d_tmp, d_ret,
 					  cublas_param_3, QUDA_CUDA_FIELD_LOCATION);
+    getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_COMPUTE); 
   }
-  getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_COMPUTE); 
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_D2H);
   qudaMemcpy(return_array, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost);  
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_D2H);
@@ -451,9 +413,10 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_FREE);
   pool_device_free(d_coeffs1);
   pool_device_free(d_coeffs2);
+  pool_device_free(d_coeffs3);
   pool_device_free(d_tmp);
   pool_device_free(d_q3);
-  pool_device_free(d_ret);  
+  pool_device_free(d_ret);
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_FREE);
 
   saveTuneCache();
@@ -503,14 +466,10 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   
   // Device array to hold the entire return array
   const size_t data_ret_bytes = nMom*X[3]*n1*n2*2*precision;
-  void *d_ret = pool_device_malloc(data_ret_bytes);
-
-  // Device array to hold the inner product
   const size_t data_tmp_bytes = n_sites*2*precision;
-  void *d_tmp = pool_device_malloc(data_tmp_bytes);
-
-  // Device array to hold the momentum
   const size_t data_mom_bytes = nMom*n_spatial_sites*2*precision;
+  void *d_ret = pool_device_malloc(data_ret_bytes);
+  void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
   
   QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
