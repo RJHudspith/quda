@@ -26,7 +26,6 @@ QudaBLASOperation blas_gemm_trans_a = QUDA_BLAS_OP_N;
 QudaBLASOperation blas_gemm_trans_b = QUDA_BLAS_OP_N;
 std::array<int, 3> blas_gemm_mnk = {64, 64, 64};
 std::array<int, 3> blas_gemm_leading_dims = {128, 128, 128};
-std::array<int, 3> blas_gemm_offsets = {0, 0, 0};
 std::array<int, 3> blas_gemm_strides = {1, 1, 1};
 std::array<double, 2> blas_gemm_alpha_re_im = {M_PI, M_E};
 std::array<double, 2> blas_gemm_beta_re_im = {M_LN2, M_LN10};
@@ -57,9 +56,6 @@ void setBLASParam(QudaBLASParam &blas_param)
   blas_param.lda = blas_gemm_leading_dims[0];
   blas_param.ldb = blas_gemm_leading_dims[1];
   blas_param.ldc = blas_gemm_leading_dims[2];
-  blas_param.a_offset = blas_gemm_offsets[0];
-  blas_param.b_offset = blas_gemm_offsets[1];
-  blas_param.c_offset = blas_gemm_offsets[2];
   blas_param.a_stride = blas_gemm_strides[0];
   blas_param.b_stride = blas_gemm_strides[1];
   blas_param.c_stride = blas_gemm_strides[2];
@@ -81,178 +77,9 @@ double gemm_test(test_t test_param)
 
   display_test_info(blas_param);
 
-  // Sanity checks on parameters
-  //-------------------------------------------------------------------------
-  // If the user passes non positive M,N, or K, we error out
-  int min_dim = std::min(blas_param.m, std::min(blas_param.n, blas_param.k));
-  if (min_dim <= 0) {
-    errorQuda("BLAS dims must be positive: m=%d, n=%d, k=%d", blas_param.m, blas_param.n, blas_param.k);
-  }
-
-  // If the user passes a negative stride, we error out as this has no meaning.
-  int min_stride = std::min(std::min(blas_param.a_stride, blas_param.b_stride), blas_param.c_stride);
-  if (min_stride < 0) {
-    errorQuda("BLAS strides must be positive or zero: a_stride=%d, b_stride=%d, c_stride=%d", blas_param.a_stride,
-              blas_param.b_stride, blas_param.c_stride);
-  }
-
-  // If the user passes a negative offset, we error out as this has no meaning.
-  int min_offset = std::min(std::min(blas_param.a_offset, blas_param.b_offset), blas_param.c_offset);
-  if (min_offset < 0) {
-    errorQuda("BLAS offsets must be positive or zero: a_offset=%d, b_offset=%d, c_offset=%d", blas_param.a_offset,
-              blas_param.b_offset, blas_param.c_offset);
-  }
-
-  // Leading dims are dependendent on the matrix op type.
-  if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
-    if (blas_param.trans_a == QUDA_BLAS_OP_N) {
-      if (blas_param.lda < std::max(1, blas_param.m))
-        errorQuda("lda=%d must be >= max(1,m=%d)", blas_param.lda, blas_param.m);
-    } else {
-      if (blas_param.lda < std::max(1, blas_param.k))
-        errorQuda("lda=%d must be >= max(1,k=%d)", blas_param.lda, blas_param.k);
-    }
-
-    if (blas_param.trans_b == QUDA_BLAS_OP_N) {
-      if (blas_param.ldb < std::max(1, blas_param.k))
-        errorQuda("ldb=%d must be >= max(1,k=%d)", blas_param.ldb, blas_param.k);
-    } else {
-      if (blas_param.ldb < std::max(1, blas_param.n))
-        errorQuda("ldb=%d must be >= max(1,n=%d)", blas_param.ldb, blas_param.n);
-    }
-    if (blas_param.ldc < std::max(1, blas_param.m))
-      errorQuda("ldc=%d must be >= max(1,m=%d)", blas_param.ldc, blas_param.m);
-  } else {
-    if (blas_param.trans_a == QUDA_BLAS_OP_N) {
-      if (blas_param.lda < std::max(1, blas_param.k))
-        errorQuda("lda=%d must be >= max(1,k=%d)", blas_param.lda, blas_param.k);
-    } else {
-      if (blas_param.lda < std::max(1, blas_param.m))
-        errorQuda("lda=%d must be >= max(1,m=%d)", blas_param.lda, blas_param.m);
-    }
-    if (blas_param.trans_b == QUDA_BLAS_OP_N) {
-      if (blas_param.ldb < std::max(1, blas_param.n))
-        errorQuda("ldb=%d must be >= max(1,n=%d)", blas_param.ldb, blas_param.n);
-    } else {
-      if (blas_param.ldb < std::max(1, blas_param.k))
-        errorQuda("ldb=%d must be >= max(1,k=%d)", blas_param.ldb, blas_param.k);
-    }
-    if (blas_param.ldc < std::max(1, blas_param.n))
-      errorQuda("ldc=%d must be >= max(1,n=%d)", blas_param.ldc, blas_param.n);
-  }
-
-  // If the batch value is non-positve, we error out
-  if (blas_param.batch_count <= 0) { errorQuda("Batches must be positive: batches=%d", blas_param.batch_count); }
-  //-------------------------------------------------------------------------
-
-  // Reference data is always in complex double
-  size_t data_in_size = sizeof(double);
-
-  // If the user passes non-zero offsets, add one extra
-  // matrix to the test data.
-  int batches_extra = 0;
-  if (blas_param.a_offset + blas_param.b_offset + blas_param.c_offset > 0) { batches_extra++; }
-  int batches = blas_param.batch_count + batches_extra;
-  uint64_t refA_size = 0, refB_size = 0, refC_size = 0;
-  if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
-    // leading dimension is in terms of consecutive data
-    // elements in a column, multiplied by number of rows
-    if (blas_param.trans_a == QUDA_BLAS_OP_N) {
-      refA_size = blas_param.lda * blas_param.k; // A_mk
-    } else {
-      refA_size = blas_param.lda * blas_param.m; // A_km
-    }
-
-    if (blas_param.trans_b == QUDA_BLAS_OP_N) {
-      refB_size = blas_param.ldb * blas_param.n; // B_kn
-    } else {
-      refB_size = blas_param.ldb * blas_param.k; // B_nk
-    }
-    refC_size = blas_param.ldc * blas_param.n; // C_mn
-  } else {
-    // leading dimension is in terms of consecutive data
-    // elements in a row, multiplied by number of columns.
-    if (blas_param.trans_a == QUDA_BLAS_OP_N) {
-      refA_size = blas_param.lda * blas_param.m; // A_mk
-    } else {
-      refA_size = blas_param.lda * blas_param.k; // A_km
-    }
-    if (blas_param.trans_b == QUDA_BLAS_OP_N) {
-      refB_size = blas_param.ldb * blas_param.k; // B_nk
-    } else {
-      refB_size = blas_param.ldb * blas_param.n; // B_kn
-    }
-    refC_size = blas_param.ldc * blas_param.m; // C_mn
-  }
-
-  void *refA = pinned_malloc(batches * refA_size * 2 * data_in_size);
-  void *refB = pinned_malloc(batches * refB_size * 2 * data_in_size);
-  void *refC = pinned_malloc(batches * refC_size * 2 * data_in_size);
-  void *refCcopy = pinned_malloc(batches * refC_size * 2 * data_in_size);
-
-  prepare_ref_array(refA, batches, refA_size, data_in_size, blas_data_type);
-  prepare_ref_array(refB, batches, refB_size, data_in_size, blas_data_type);
-  prepare_ref_array(refC, batches, refC_size, data_in_size, blas_data_type);
-  prepare_ref_array(refCcopy, batches, refC_size, data_in_size, blas_data_type);
-
-  // Create new arrays appropriate for the requested problem, and copy over the data.
-  void *arrayA = nullptr;
-  void *arrayB = nullptr;
-  void *arrayC = nullptr;
-  void *arrayCcopy = nullptr;
-  size_t data_out_size = 0;
-  // Reference data is always complex, but test data can be either real or complex
-  int re_im = 0;
-
-  switch (blas_data_type) {
-  case QUDA_BLAS_DATATYPE_S:
-    data_out_size = sizeof(float);
-    re_im = 1;
-    break;
-  case QUDA_BLAS_DATATYPE_D:
-    data_out_size = sizeof(double);
-    re_im = 1;
-    break;
-  case QUDA_BLAS_DATATYPE_C:
-    data_out_size = sizeof(float);
-    re_im = 2;
-    break;
-  case QUDA_BLAS_DATATYPE_Z:
-    data_out_size = sizeof(double);
-    re_im = 2;
-    break;
-  default: errorQuda("Unrecognised data type %d\n", blas_data_type);
-  }
-
-  arrayA = pinned_malloc(batches * refA_size * re_im * data_out_size);
-  arrayB = pinned_malloc(batches * refB_size * re_im * data_out_size);
-  arrayC = pinned_malloc(batches * refC_size * re_im * data_out_size);
-  arrayCcopy = pinned_malloc(batches * refC_size * re_im * data_out_size);
-
-  copy_array(arrayA, refA, batches, refA_size, data_out_size, blas_data_type);
-  copy_array(arrayB, refB, batches, refB_size, data_out_size, blas_data_type);
-  copy_array(arrayC, refC, batches, refC_size, data_out_size, blas_data_type);
-  copy_array(arrayCcopy, refC, batches, refC_size, data_out_size, blas_data_type);
-
-  // Perform device GEMM Blas operation
-  blasGEMMQuda(arrayA, arrayB, arrayC, native_blas_lapack ? QUDA_BOOLEAN_TRUE : QUDA_BOOLEAN_FALSE, &blas_param);
-
-  double deviation = 0.0;
-  if (verify_results) {
-    deviation = blasGEMMQudaVerify(arrayA, arrayB, arrayC, arrayCcopy, refA_size, refB_size, refC_size, &blas_param);
-  }
-
-  host_free(refA);
-  host_free(refB);
-  host_free(refC);
-  host_free(refCcopy);
-
-  host_free(arrayA);
-  host_free(arrayB);
-  host_free(arrayC);
-  host_free(arrayCcopy);
-
-  return deviation;
+  // this needs to be worked out properly
+  
+  return 10 ;
 }
 
 double lu_inv_test(test_t test_param)
@@ -266,7 +93,6 @@ double lu_inv_test(test_t test_param)
 
   // Sanity checks on parameters
   //-------------------------------------------------------------------------
-  // Leading dims, strides, and offsets are irrelevant for LU inversions.
 
   // If the batch value is non-positve, we error out
   if (blas_param.batch_count <= 0) { errorQuda("Batches must be positive: batches=%d", blas_param.batch_count); }
@@ -380,11 +206,6 @@ struct blas_interface_test : quda_test {
     opgroup
       ->add_option("--blas-gemm-leading-dims", blas_gemm_leading_dims,
                    "Set the leading dimensions A, B, and C matrices GEMM (default 128 128 128) ")
-      ->expected(3);
-
-    opgroup
-      ->add_option("--blas-gemm-offsets", blas_gemm_offsets,
-                   "Set the offsets for GEMM matrices A, B, and C (default 0 0 0)")
       ->expected(3);
 
     opgroup

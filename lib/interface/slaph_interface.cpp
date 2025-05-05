@@ -121,12 +121,17 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
   cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
   cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
   cublas_param_mom_sum.m = nMom;
+  cublas_param_mom_sum.n = 1 ;
   cublas_param_mom_sum.k = nSites;
   cublas_param_mom_sum.lda = nSites;
   cublas_param_mom_sum.ldb = nSites;
   cublas_param_mom_sum.ldc = n1*n2*n3;
-  cublas_param_mom_sum.batch_count = 1;
-  cublas_param_mom_sum.alpha = 1.0; cublas_param_mom_sum.beta  = 0.0;
+  // stride it this time
+  cublas_param_mom_sum.a_stride = 0 ;
+  cublas_param_mom_sum.b_stride = nSites ;
+  cublas_param_mom_sum.c_stride = 1 ; 
+  cublas_param_mom_sum.batch_count = blockSizeMomProj;
+  cublas_param_mom_sum.alpha = 1.0; cublas_param_mom_sum.beta = 0.0;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
   cublas_param_mom_sum.blas_type = QUDA_BLAS_GEMM ;
@@ -143,10 +148,10 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
 	getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
 	nInBlock++;
 	if (nInBlock == blockSizeMomProj ) {
-	  cublas_param_mom_sum.n = nInBlock;
-	  cublas_param_mom_sum.c_offset = (dil1*n2 + dil2)*n3 + dil3 - nInBlock + 1;
 	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);	  
-	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret, cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
+	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp,
+						(std::complex<double>*)d_ret + (dil1*n2 + dil2)*n3 + dil3 - nInBlock + 1,
+						cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
 	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);	  
 	  nInBlock = 0;
 	}
@@ -243,11 +248,14 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
   cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
   cublas_param_mom_sum.m = nMom;
   cublas_param_mom_sum.k = nSites;
-  cublas_param_mom_sum.n = blockSizeMomProj;
+  cublas_param_mom_sum.n = 1;
   cublas_param_mom_sum.lda = nSites;
   cublas_param_mom_sum.ldb = nSites;
   cublas_param_mom_sum.ldc = nEvChoose3;
-  cublas_param_mom_sum.batch_count = 1;
+  cublas_param_mom_sum.a_stride = 0;
+  cublas_param_mom_sum.b_stride = nSites;
+  cublas_param_mom_sum.c_stride = 1;
+  cublas_param_mom_sum.batch_count = blockSizeMomProj;
   cublas_param_mom_sum.alpha = 1.0 ; cublas_param_mom_sum.beta = 0.0 ;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
@@ -264,9 +272,8 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
 	getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
 	nInBlock++;
 	if (nInBlock == blockSizeMomProj) {
-	  cublas_param_mom_sum.c_offset = blockStart;
 	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
-	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret,
+	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (std::complex<double>*)d_ret+blockStart,
 						cublas_param_mom_sum,
 						QUDA_CUDA_FIELD_LOCATION);
 	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
@@ -357,7 +364,10 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   cublas_param_2.lda = nEv;
   cublas_param_2.ldb = n3;
   cublas_param_2.ldc = n3;
-  cublas_param_2.batch_count = 1 ;
+  cublas_param_2.a_stride = 0 ;
+  cublas_param_2.b_stride = n3*nEv ;
+  cublas_param_2.c_stride = n2*nEv ;
+  cublas_param_2.batch_count = nSubEv ;
   cublas_param_2.alpha = 1.0 ; cublas_param_2.beta = 0.0 ;
   cublas_param_2.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_2.data_type = QUDA_BLAS_DATATYPE_Z;
@@ -392,17 +402,12 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
     getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_COMPUTE);  
     blas_lapack::native::stridedBatchGEMM( d_tmp, d_coeffs3, d_q3, cublas_param_1,
                                            QUDA_CUDA_FIELD_LOCATION ) ;
-    // this can be batched by Ev but I don't follow the interface
-    for( int j = 0 ; j < nSubEv ; j++ ) {
-      blas_lapack::native::stridedBatchGEMM( d_coeffs2,
-					     (double _Complex*)d_q3 + j*n3*nEv,
-					     (double _Complex*)d_tmp + j*n2*n3,
-					     cublas_param_2, QUDA_CUDA_FIELD_LOCATION);
-    }
-    cublas_param_3.a_offset = iRank*nSubEv;
-    cublas_param_3.c_offset = p*n1*n2*n3;
-    blas_lapack::native::stridedBatchGEMM(d_coeffs1, d_tmp, d_ret,
-					  cublas_param_3, QUDA_CUDA_FIELD_LOCATION);
+    blas_lapack::native::stridedBatchGEMM( d_coeffs2, d_q3 , d_tmp ,
+					   cublas_param_2, QUDA_CUDA_FIELD_LOCATION);
+    blas_lapack::native::stridedBatchGEMM( (double _Complex*)d_coeffs1+iRank*nSubEv,
+					   d_tmp,
+					   (double _Complex*)d_ret + p*n1*n2*n3,
+					   cublas_param_3, QUDA_CUDA_FIELD_LOCATION);
     getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_COMPUTE); 
   }
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_D2H);
@@ -440,7 +445,10 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
-
+  if( (n2*n1)%block_size_mom_proj != 0 ) {
+    errorQuda("I only support block sizes that are factors of n1*n2") ;
+  }
+  
   // Some common variables
   const size_t n_spatial_sites = X[0]*X[1]*X[2];
   const size_t n_sites = n_spatial_sites*X[3];
@@ -466,7 +474,7 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   
   // Device array to hold the entire return array
   const size_t data_ret_bytes = nMom*X[3]*n1*n2*2*precision;
-  const size_t data_tmp_bytes = n_sites*2*precision;
+  const size_t data_tmp_bytes = n_sites*2*precision*block_size_mom_proj;
   const size_t data_mom_bytes = nMom*n_spatial_sites*2*precision;
   void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
@@ -481,7 +489,10 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   cublas_param_mom_sum.lda = n_spatial_sites ;
   cublas_param_mom_sum.ldb = n_spatial_sites ;
   cublas_param_mom_sum.ldc = X[3] ;
-  cublas_param_mom_sum.batch_count = 1 ;
+  cublas_param_mom_sum.a_stride = X[3] ;
+  cublas_param_mom_sum.b_stride = n_spatial_sites*X[3] ;
+  cublas_param_mom_sum.c_stride = X[3]*nMom ;
+  cublas_param_mom_sum.batch_count = block_size_mom_proj ;
   cublas_param_mom_sum.alpha = 1.0; cublas_param_mom_sum.beta = 0.0;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
@@ -498,6 +509,7 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_H2D);
 
   // doing too much work here as (di1,dil2) == (dil2,dil1)*
+  int n_in_block = 0 , idx_last = 0 ;
   for (int dil1=0; dil1<n1; dil1++) {
     cpu_quark_bar_param.v = host_quark_bar[dil1] ;
     ColorSpinorField quark_bar(cpu_quark_bar_param) ;
@@ -506,14 +518,19 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
     // just block dil2
     for (int dil2=0; dil2<n2; dil2++){
       getProfileCurrentKernel().TPSTART(QUDA_PROFILE_COMPUTE);
-      innerProductQuda( quda_quark_bar, quda_quark[dil2], d_tmp );
+      innerProductQuda( quda_quark_bar, quda_quark[dil2], (std::complex<double>*)d_tmp+n_sites*n_in_block );
       getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_COMPUTE);
-      getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
-      blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp,
-					     (std::complex<double>*)d_ret+(dil2+n2*dil1)*X[3]*nMom,
-					     cublas_param_mom_sum,
-					     QUDA_CUDA_FIELD_LOCATION);
-      getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE); 
+      n_in_block++ ;
+      if( n_in_block == block_size_mom_proj ) {
+	getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
+	blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp,
+					       (std::complex<double>*)d_ret+idx_last*X[3]*nMom,
+					       cublas_param_mom_sum,
+					       QUDA_CUDA_FIELD_LOCATION);
+	idx_last += block_size_mom_proj ;
+	n_in_block = 0 ;
+	getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+      }
     }
   }
   // Copy device data back to host

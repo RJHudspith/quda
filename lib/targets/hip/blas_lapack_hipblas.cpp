@@ -14,13 +14,10 @@
 
 namespace quda
 {
-
   namespace blas_lapack
   {
-
     namespace native
     {
-
 #ifdef NATIVE_LAPACK_LIB
       static hipblasHandle_t handle;
 #endif

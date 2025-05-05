@@ -893,9 +893,9 @@ extern "C" {
     int lda;                   /**< leading dimension of two-dimensional array used to store the matrix A. */
     int ldb;                   /**< leading dimension of two-dimensional array used to store matrix B. */
     int ldc;                   /**< leading dimension of two-dimensional array used to store matrix C. */
-    int a_offset;              /**< position of the A array from which begin read/write. */
-    int b_offset;              /**< position of the B array from which begin read/write. */
-    int c_offset;              /**< position of the C array from which begin read/write. */
+    //int a_offset;              /**< position of the A array from which begin read/write. */
+    //int b_offset;              /**< position of the B array from which begin read/write. */
+    //int c_offset;              /**< position of the C array from which begin read/write. */
     int a_stride;              /**< stride of the A array in strided(batched) mode */
     int b_stride;              /**< stride of the B array in strided(batched) mode */
     int c_stride;              /**< stride of the C array in strided(batched) mode */

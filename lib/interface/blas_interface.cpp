@@ -58,6 +58,18 @@ void blasGEMMQuda(void *arrayA, void *arrayB, void *arrayC, QudaBoolean use_nati
     // and it will handle the data movement for the user.
 
     // Extract data from the param struct for device malloc
+    size_t data_size ;
+    switch( blas_param -> data_type ) {
+    case QUDA_BLAS_DATATYPE_S : data_size = 4  ; break ;
+    case QUDA_BLAS_DATATYPE_D : data_size = 8  ; break ;
+    case QUDA_BLAS_DATATYPE_C : data_size = 8  ; break ;
+    case QUDA_BLAS_DATATYPE_Z : data_size = 16 ; break ;
+    default :
+      errorQuda( "Unknown blas data_type %d" , blas_param -> data_type ) ;
+      break ;
+    }
+
+    // Extract data from the param struct for device malloc
     uint64_t arrayA_size = 0, arrayB_size = 0, arrayC_size = 0;
     if (blas_param->data_order == QUDA_BLAS_DATAORDER_COL) {
       // leading dimension is in terms of consecutive data
@@ -99,22 +111,13 @@ void blasGEMMQuda(void *arrayA, void *arrayB, void *arrayC, QudaBoolean use_nati
       arrayC_size = blas_param->ldc * blas_param->m; // C_mn
       if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array C_{%d, %d}\n", blas_param->m, blas_param->ldc);
     }
-
-    size_t data_size = (blas_param->data_type == QUDA_BLAS_DATATYPE_D || blas_param->data_type == QUDA_BLAS_DATATYPE_Z) ?
-      sizeof(double) :
-      sizeof(float);
-    int re_im = 1;
-    if (blas_param->data_type == QUDA_BLAS_DATATYPE_C || blas_param->data_type == QUDA_BLAS_DATATYPE_Z) { re_im *= 2; }
-
-    // If the user passes non-zero offsets, add one extra
-    // matrix to the device array to accomodate it.
-    int batches_extra = 0;
-    if (blas_param->a_offset + blas_param->b_offset + blas_param->c_offset > 0) { batches_extra++; }
-    int batches = blas_param->batch_count + batches_extra;
-
-    size_t A_bytes = batches * arrayA_size * re_im * data_size;
-    size_t B_bytes = batches * arrayB_size * re_im * data_size;
-    size_t C_bytes = batches * arrayC_size * re_im * data_size;
+    arrayA_size += blas_param->a_stride*blas_param->batch_count ;
+    arrayB_size += blas_param->b_stride*blas_param->batch_count ;
+    arrayC_size += blas_param->c_stride*blas_param->batch_count ;
+    
+    const size_t A_bytes = arrayA_size * data_size;
+    const size_t B_bytes = arrayB_size * data_size;
+    const size_t C_bytes = arrayC_size * data_size;
     if (getVerbosity() >= QUDA_VERBOSE)
       printfQuda("A_Gbtyes = %f, B_Gbtyes = %f, C_Gbtyes = %f\n", 1.0 * A_bytes / std::pow(1024, 3),
                  1.0 * B_bytes / std::pow(1024, 3), 1.0 * C_bytes / std::pow(1024, 3));
