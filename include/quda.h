@@ -893,9 +893,6 @@ extern "C" {
     int lda;                   /**< leading dimension of two-dimensional array used to store the matrix A. */
     int ldb;                   /**< leading dimension of two-dimensional array used to store matrix B. */
     int ldc;                   /**< leading dimension of two-dimensional array used to store matrix C. */
-    //int a_offset;              /**< position of the A array from which begin read/write. */
-    //int b_offset;              /**< position of the B array from which begin read/write. */
-    //int c_offset;              /**< position of the C array from which begin read/write. */
     int a_stride;              /**< stride of the A array in strided(batched) mode */
     int b_stride;              /**< stride of the B array in strided(batched) mode */
     int c_stride;              /**< stride of the C array in strided(batched) mode */
@@ -906,7 +903,7 @@ extern "C" {
     int inv_mat_size; /**< The rank of the square matrix in the LU inversion */
 
     // Common params
-    int batch_count;              /**< number of pointers contained in arrayA, arrayB and arrayC. */
+    int batch_count;              /**number of batched multiplies to perform*/
     QudaBLASDataType data_type;   /**< Specifies if using S(C) or D(Z) BLAS type */
     QudaBLASDataOrder data_order; /**< Specifies if using Row or Column major */
 
@@ -1785,10 +1782,11 @@ extern "C" {
    * @param[in] arrayA The array containing the A matrix data
    * @param[in] arrayB The array containing the B matrix data
    * @param[in] arrayC The array containing the C matrix data
-   * @param[in] native Boolean to use either the native or generic version
+   * @param[in] native Boolean to use either the native (device) or eigen (Host) version
    * @param[in] param The data defining the problem execution.
    */
-  void blasGEMMQuda(void *arrayA, void *arrayB, void *arrayC, QudaBoolean native, QudaBLASParam *param);
+  void blasGEMMQuda( const void *arrayA, const void *arrayB, void *arrayC,
+		     const QudaBoolean native, QudaBLASParam param);
 
   /**
    * @brief Strided Batched in-place matrix inversion via LU

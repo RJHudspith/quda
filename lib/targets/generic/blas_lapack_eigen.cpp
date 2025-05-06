@@ -125,7 +125,7 @@ namespace quda
       }
 
       template <typename EigenMat, typename T>
-      static void GEMM(void *A_h, void *B_h, void *C_h, const T alpha, const T beta, const QudaBLASParam blas_param)
+      static void GEMM(const void *A_h, const void *B_h, void *C_h, const T alpha, const T beta, const QudaBLASParam blas_param)
       {
         T *A_ptr = (T *)A_h , *B_ptr = (T *)B_h , *C_ptr = (T *)C_h ;
         // Eigen objects to store data
@@ -168,8 +168,8 @@ namespace quda
       //------------------------------------------------------
       // Strided Batched GEMM conforming to cuBlas parameters
       //------------------------------------------------------
-      long long stridedBatchGEMM(void *A_data, void *B_data, void *C_data, QudaBLASParam blas_param,
-                                 QudaFieldLocation location)
+      long long stridedBatchGEMM(const void *A_data, const void *B_data, void *C_data,
+				 QudaBLASParam blas_param, const QudaFieldLocation location)
       {
 	if( location != QUDA_CPU_FIELD_LOCATION ) {
           errorQuda("StridedBatchGemm lapack eigen expects fields only on host");
@@ -179,33 +179,8 @@ namespace quda
         timeval start, stop;
         gettimeofday(&start, NULL);
 
-        // If the user passes non positive M,N, or K, we error out
-        const int min_dim = std::min(blas_param.m, std::min(blas_param.n, blas_param.k));
-        if (min_dim <= 0) {
-          errorQuda("BLAS dims must be positive: m=%d, n=%d, k=%d", blas_param.m, blas_param.n, blas_param.k);
-        }
-        // If the user passes a negative stride, we error out as this has no meaning.
-        const int min_stride = std::min(std::min(blas_param.a_stride, blas_param.b_stride), blas_param.c_stride);
-        if (min_stride < 0) {
-          errorQuda("BLAS strides must be positive or zero: a_stride=%d, b_stride=%d, c_stride=%d", blas_param.a_stride,
-                    blas_param.b_stride, blas_param.c_stride);
-        }
-        // If the batch value is non-positve, we err
-        if (blas_param.batch_count < 1) { errorQuda("Batches must be positive: batches=%d", blas_param.batch_count); }
-        if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
-          if (blas_param.trans_a == QUDA_BLAS_OP_N) { testmaxblas( "lda" , blas_param.lda , blas_param.m ) ;
-          } else {                                    testmaxblas( "lda" , blas_param.lda , blas_param.k ) ; }
-          if (blas_param.trans_b == QUDA_BLAS_OP_N) { testmaxblas( "ldb" , blas_param.ldb , blas_param.k ) ;
-          } else {                                    testmaxblas( "ldb" , blas_param.ldb , blas_param.n ) ; }
-          testmaxblas( "ldc" , blas_param.ldc , blas_param.m ) ;
-        } else {
-          // rowmajor tests
-          if( blas_param.trans_a == QUDA_BLAS_OP_N) { testmaxblas( "lda" , blas_param.lda , blas_param.k ) ;
-          } else {                                    testmaxblas( "lda" , blas_param.lda , blas_param.m ) ; }
-          if (blas_param.trans_b == QUDA_BLAS_OP_N) { testmaxblas( "ldb" , blas_param.ldb , blas_param.n ) ;
-          } else {                                    testmaxblas( "ldb" , blas_param.ldb , blas_param.k ) ; }
-          testmaxblas( "ldc" , blas_param.ldc , blas_param.n ) ;
-	}
+	runBLASchecks( blas_param ) ;
+
         // Swap A and B if in column order
         if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
           std::swap(blas_param.m, blas_param.n);

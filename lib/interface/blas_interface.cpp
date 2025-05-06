@@ -10,117 +10,71 @@ using namespace quda;
 TimeProfile &getProfileBLAS();
 void checkBLASParam(QudaBLASParam &param);
 
-void blasGEMMQuda(void *arrayA, void *arrayB, void *arrayC, QudaBoolean use_native, QudaBLASParam *blas_param)
+void blasGEMMQuda( const void *arrayA, const void *arrayB, void *arrayC,
+		   const QudaBoolean use_native, QudaBLASParam blas_param)
 {
   getProfileBLAS().TPSTART(QUDA_PROFILE_TOTAL);
-  checkBLASParam(*blas_param);
+  checkBLASParam(blas_param);
 
-  // cuBLAS works exclusively in column major order. If the input data is in
-  // row major order, we may treat the A and B and C arrays as A^T, B^T, and C^T.
-  // We swap the order of the A * B multiplication and swap the
-  // operation types and other data to recover the the desired result in the
-  // desired order.
-  // E.g: in row major, the operation,
-  // C = a * A^T * B + b * C
-  //
-  // will become the column major operation
-  // C^T = a * B^T * A + b * C^T
-  //
-  // By inspection, one can see that transposition of the above column major
-  // operation will result in the desired row major answer:
-  //
-  // (C^T)^T = a * (B^T * A)^T + b * (C^T)^T
-  //  -->  C = a *  A^T * B    + b *  C
-  //
-  // We must also swap around some parameters. The Row major indices,
-  // A_{m, lda}, B_{k, ldb}, C_{m, ldc}
-  // become
-  // A^T_{lda, m}, B^T_{ldb, k}, C^T_{ldc, m}.
-  // so the leading dimensions remain the same. However, we must change the actual
-  // matrix dims m,n,k to reflect the change to column major.
-  // m_{col} = n_{row}
-  // n_{col} = m_{row}
-  // k_{col} = k_{row}
-  // And because we are swapping the A and B arrays, we must also swap their
-  // leading dim values and any offsets. All this is done behind the scenes in the
-  // BatchGEMM function, and before function exit all pointers and values are
-  // restored to the values they had on entry.
-
+  // if we want to do this only on the host we call this
   if (use_native == QUDA_BOOLEAN_FALSE) {
     getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
-    blas_lapack::generic::stridedBatchGEMM(arrayA, arrayB, arrayC, *blas_param, QUDA_CPU_FIELD_LOCATION);
+    blas_lapack::generic::stridedBatchGEMM(arrayA, arrayB, arrayC, blas_param, QUDA_CPU_FIELD_LOCATION);
     getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+
+  // otherwise we need to allocate on the device and copy over
   } else {
     getProfileBLAS().TPSTART(QUDA_PROFILE_INIT);
-
-    // The data in the arrays is on the host. We transfer the data to the device here
-    // for timing purposes. One can pass host pointers to the BatchGEMM function
-    // and it will handle the data movement for the user.
-
-    // Extract data from the param struct for device malloc
-    size_t data_size ;
-    switch( blas_param -> data_type ) {
+    
+    size_t data_size = 4 ;
+    switch( blas_param.data_type ) {
     case QUDA_BLAS_DATATYPE_S : data_size = 4  ; break ;
     case QUDA_BLAS_DATATYPE_D : data_size = 8  ; break ;
     case QUDA_BLAS_DATATYPE_C : data_size = 8  ; break ;
     case QUDA_BLAS_DATATYPE_Z : data_size = 16 ; break ;
     default :
-      errorQuda( "Unknown blas data_type %d" , blas_param -> data_type ) ;
+      errorQuda( "Unknown blas data_type %d" , blas_param.data_type ) ;
       break ;
     }
-
-    // Extract data from the param struct for device malloc
-    uint64_t arrayA_size = 0, arrayB_size = 0, arrayC_size = 0;
-    if (blas_param->data_order == QUDA_BLAS_DATAORDER_COL) {
-      // leading dimension is in terms of consecutive data
-      // elements in a column, multiplied by number of rows
-      if (blas_param->trans_a == QUDA_BLAS_OP_N) {
-        arrayA_size = blas_param->lda * blas_param->k; // A_mk
-        if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array A_{%d, %d}\n", blas_param->lda, blas_param->k);
+    // Extract data from the param struct for device malloc looks a bit funny because of
+    // the changes caused by the batching
+    size_t arrayA_size = 0, arrayB_size = 0, arrayC_size = 0;
+    if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
+      if (blas_param.trans_a == QUDA_BLAS_OP_N) {
+        arrayA_size = blas_param.m + blas_param.lda * (blas_param.k-1) ; 
       } else {
-        arrayA_size = blas_param->lda * blas_param->m; // A_km
-        if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array A_{%d, %d}\n", blas_param->lda, blas_param->m);
+	arrayA_size = blas_param.k + blas_param.lda * (blas_param.m-1) ; 
       }
-
-      if (blas_param->trans_b == QUDA_BLAS_OP_N) {
-        arrayB_size = blas_param->ldb * blas_param->n; // B_kn
-        if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array B_{%d, %d}\n", blas_param->ldb, blas_param->n);
+      if (blas_param.trans_b == QUDA_BLAS_OP_N) {
+        arrayB_size = blas_param.k + blas_param.ldb * (blas_param.n-1) ; 
       } else {
-        arrayB_size = blas_param->ldb * blas_param->k; // B_nk
-        if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array B_{%d, %d}\n", blas_param->ldb, blas_param->k);
+        arrayB_size = blas_param.n + blas_param.ldb * (blas_param.k-1) ;
       }
-      arrayC_size = blas_param->ldc * blas_param->n; // C_mn
-      if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array C_{%d, %d}\n", blas_param->ldc, blas_param->n);
+      arrayC_size = blas_param.m + blas_param.ldc * (blas_param.n-1) ; 
     } else {
-      // leading dimension is in terms of consecutive data
-      // elements in a row, multiplied by number of columns.
-      if (blas_param->trans_a == QUDA_BLAS_OP_N) {
-        arrayA_size = blas_param->lda * blas_param->m; // A_mk
-        if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array A_{%d, %d}\n", blas_param->m, blas_param->lda);
+      if (blas_param.trans_a == QUDA_BLAS_OP_N) {
+        arrayA_size = blas_param.k + blas_param.lda * (blas_param.m-1); 
       } else {
-        arrayA_size = blas_param->lda * blas_param->k; // A_km
-        if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array A_{%d, %d}\n", blas_param->k, blas_param->lda);
+        arrayA_size = blas_param.m + blas_param.lda * (blas_param.k-1); 
       }
-      if (blas_param->trans_b == QUDA_BLAS_OP_N) {
-        arrayB_size = blas_param->ldb * blas_param->k; // B_nk
-        if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array B_{%d, %d}\n", blas_param->k, blas_param->ldb);
+      if (blas_param.trans_b == QUDA_BLAS_OP_N) {
+	arrayB_size = blas_param.n + blas_param.ldb * (blas_param.k-1) ;
       } else {
-        arrayB_size = blas_param->ldb * blas_param->n; // B_kn
-        if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array B_{%d, %d}\n", blas_param->n, blas_param->ldb);
+	arrayB_size = blas_param.k + blas_param.ldb * (blas_param.m-1) ;
       }
-      arrayC_size = blas_param->ldc * blas_param->m; // C_mn
-      if (getVerbosity() >= QUDA_VERBOSE) printfQuda("array C_{%d, %d}\n", blas_param->m, blas_param->ldc);
+      arrayC_size = blas_param.n + blas_param.ldc * (blas_param.m-1) ;
     }
-    arrayA_size += blas_param->a_stride*blas_param->batch_count ;
-    arrayB_size += blas_param->b_stride*blas_param->batch_count ;
-    arrayC_size += blas_param->c_stride*blas_param->batch_count ;
+    arrayA_size += (blas_param.batch_count-1)*blas_param.a_stride ;
+    arrayB_size += (blas_param.batch_count-1)*blas_param.b_stride ;
+    arrayC_size += (blas_param.batch_count-1)*blas_param.c_stride ;
     
     const size_t A_bytes = arrayA_size * data_size;
     const size_t B_bytes = arrayB_size * data_size;
     const size_t C_bytes = arrayC_size * data_size;
-    if (getVerbosity() >= QUDA_VERBOSE)
+    if (getVerbosity() >= QUDA_VERBOSE) {
       printfQuda("A_Gbtyes = %f, B_Gbtyes = %f, C_Gbtyes = %f\n", 1.0 * A_bytes / std::pow(1024, 3),
                  1.0 * B_bytes / std::pow(1024, 3), 1.0 * C_bytes / std::pow(1024, 3));
+    }
     void *A_d = pool_device_malloc(A_bytes);
     void *B_d = pool_device_malloc(B_bytes);
     void *C_d = pool_device_malloc(C_bytes);
@@ -138,7 +92,7 @@ void blasGEMMQuda(void *arrayA, void *arrayB, void *arrayC, QudaBoolean use_nati
     // Compute Batched GEMM
     getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
 
-    blas_lapack::native::stridedBatchGEMM(A_d, B_d, C_d, *blas_param, QUDA_CUDA_FIELD_LOCATION);
+    blas_lapack::native::stridedBatchGEMM(A_d, B_d, C_d, blas_param, QUDA_CUDA_FIELD_LOCATION);
 
     if (getVerbosity() >= QUDA_VERBOSE) printfQuda("BatchGEMM success!\n");
     getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);

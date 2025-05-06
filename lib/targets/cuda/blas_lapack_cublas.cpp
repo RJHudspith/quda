@@ -256,54 +256,20 @@ namespace quda
       }
 #endif
 
-#ifdef NATIVE_LAPACK_LIB
-      // just a little utility for checks to avoid repetition
-      static void testmaxblas( const char *str , const int a , const int b )
-      {
-	if( a < std::max(1,b) ) {
-	  errorQuda("%s=%d must be >= max(1,%d)", str , a , b );
-	}
-      }
-      
+#ifdef NATIVE_LAPACK_LIB     
       // reverted to a more transparent interface with cublas
-      long long stridedBatchGEMM( void *A_data, void *B_data, void *C_data, QudaBLASParam blas_param,
+      long long stridedBatchGEMM( const void *A_data, const void *B_data, void *C_data, QudaBLASParam blas_param,
 				  const QudaFieldLocation location)
       {
 	if( location != QUDA_CUDA_FIELD_LOCATION ) {
           errorQuda("location of stridedBatchGEMM now must be just on the device");
 	}
-	
         long long flops = 0;
         timeval start, stop;
         gettimeofday(&start, NULL);
-
-        // Sanity checks on parameters
-        const int min_dim = std::min(blas_param.m, std::min(blas_param.n, blas_param.k));
-        if (min_dim <= 0) {
-          errorQuda("BLAS dims must be positive: m=%d, n=%d, k=%d", blas_param.m, blas_param.n, blas_param.k);
-        }
-        // error if any stride is negative
-        const int min_stride = std::min(std::min(blas_param.a_stride, blas_param.b_stride), blas_param.c_stride);
-        if (min_stride < 0) {
-          errorQuda("BLAS strides must be positive or zero: a_stride=%d, b_stride=%d, c_stride=%d", blas_param.a_stride,
-                    blas_param.b_stride, blas_param.c_stride);
-        }
-        // error if the batch value is non-positve
-        if (blas_param.batch_count < 1) { errorQuda("Batches must be greater than 0: batches=%d", blas_param.batch_count); }
-        // Leading dims are dependendent on the matrix op type.
-        if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
-          if (blas_param.trans_a == QUDA_BLAS_OP_N) { testmaxblas( "lda" , blas_param.lda , blas_param.m ) ;
-	  } else {                                    testmaxblas( "lda" , blas_param.lda , blas_param.k ) ; }
-          if (blas_param.trans_b == QUDA_BLAS_OP_N) { testmaxblas( "ldb" , blas_param.ldb , blas_param.k ) ;
-	  } else {                                    testmaxblas( "ldb" , blas_param.ldb , blas_param.n ) ; }
-	  testmaxblas( "ldc" , blas_param.ldc , blas_param.m ) ;
-        } else {
-	  // rowmajor tests and a swap
-	  if( blas_param.trans_a == QUDA_BLAS_OP_N) { testmaxblas( "lda" , blas_param.lda , blas_param.k ) ;
-	  } else {                                    testmaxblas( "lda" , blas_param.lda , blas_param.m ) ; }
-          if (blas_param.trans_b == QUDA_BLAS_OP_N) { testmaxblas( "ldb" , blas_param.ldb , blas_param.n ) ;
-	  } else {                                    testmaxblas( "ldb" , blas_param.ldb , blas_param.k ) ; }
-	  testmaxblas( "ldc" , blas_param.ldc , blas_param.n ) ;
+	// run the BLAS parameter sanity checks and do a swap if we aren't column-major as that is the native ordering
+	runBLASchecks( blas_param ) ;
+        if (blas_param.data_order == QUDA_BLAS_DATAORDER_ROW) {
           std::swap(blas_param.m, blas_param.n);
           std::swap(blas_param.lda, blas_param.ldb);
           std::swap(blas_param.trans_a, blas_param.trans_b);
@@ -321,7 +287,6 @@ namespace quda
           errorQuda("cublasGEMM type %d not implemented\n", blas_param.data_type);
 	  break ;
 	}
-	  
         cublasOperation_t trans_a = CUBLAS_OP_N;
         switch (blas_param.trans_a) {
         case QUDA_BLAS_OP_N: trans_a = CUBLAS_OP_N; break;
@@ -336,7 +301,6 @@ namespace quda
         case QUDA_BLAS_OP_C: trans_b = CUBLAS_OP_C; break;
         default: errorQuda("Unknown QUDA_BLAS_OP type %d\n", blas_param.trans_b);
         }
-
 	// who doesn't like switch statements?
 	cublasStatus_t error ;
 	switch( blas_param.data_type ) {
@@ -392,12 +356,10 @@ namespace quda
           errorQuda("cublasGEMM type %d not implemented\n", blas_param.data_type);
 	  break ;
 	}
-
-	// swap back the data pointers
+	// swap back the data pointers for A and B
         if (blas_param.data_order == QUDA_BLAS_DATAORDER_ROW) {
           std::swap(A_data, B_data);
         }
-
         qudaDeviceSynchronize();
         gettimeofday(&stop, NULL);
         const long ds = stop.tv_sec - start.tv_sec , dus = stop.tv_usec - start.tv_usec;
