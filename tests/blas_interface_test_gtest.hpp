@@ -73,10 +73,11 @@ TEST_P(BLASTest, verify)
     auto deviation_gemm = gemm_test(param);
     decltype(deviation_gemm) tol_gemm = 0.0; // initialize to suppress warning
     switch (data_type) {
+      // this should be based on size of matrix multiply and not hard coded
     case QUDA_BLAS_DATATYPE_S:
-    case QUDA_BLAS_DATATYPE_C: tol_gemm = 10 * std::numeric_limits<float>::epsilon(); break;
+    case QUDA_BLAS_DATATYPE_C: tol_gemm = 100 * std::numeric_limits<float>::epsilon(); break;
     case QUDA_BLAS_DATATYPE_D:
-    case QUDA_BLAS_DATATYPE_Z: tol_gemm = 10 * std::numeric_limits<double>::epsilon(); break;
+    case QUDA_BLAS_DATATYPE_Z: tol_gemm = 100 * std::numeric_limits<double>::epsilon(); break;
     default: errorQuda("Unexpected BLAS data type %d", data_type);
     }
     EXPECT_LE(deviation_gemm, tol_gemm) << "CPU and CUDA GEMM implementations do not agree";

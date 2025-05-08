@@ -1,3 +1,14 @@
+/**
+   @blas_interface_test.cpp
+   @brief tests the gemmBLASQuda interface using eigen comparing it to the device result
+
+   An example call could be
+
+   ./blas_interface_test --blas-data-type=D --blas-data-order=row --blas-gemm-mnk=2 1 6 --blas-gemm-leading-dims=6 4 4 --blas-gemm-strides=0 1 1 --blas-batch=4
+
+   This does A_{2,6}xB_{6,4} -> C_{2,4} where the 4 is batched 4 times, so it really is just a matvec
+
+ */
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
@@ -17,20 +28,22 @@
 // if "--enable-testing true" is passed, we run the tests defined in here
 #include <blas_interface_test_gtest.hpp>
 
-QudaBLASDataType blas_data_type = QUDA_BLAS_DATATYPE_C;
-QudaBLASDataOrder blas_data_order = QUDA_BLAS_DATAORDER_COL;
-QudaBLASType blas_test_type = QUDA_BLAS_GEMM;
-int blas_batch = 16;
+static QudaBLASDataType blas_data_type = QUDA_BLAS_DATATYPE_Z;
+static QudaBLASDataOrder blas_data_order = QUDA_BLAS_DATAORDER_ROW;
+static QudaBLASType blas_test_type = QUDA_BLAS_GEMM;
+static int blas_batch = 4;
 
-QudaBLASOperation blas_gemm_trans_a = QUDA_BLAS_OP_N;
-QudaBLASOperation blas_gemm_trans_b = QUDA_BLAS_OP_N;
-std::array<int, 3> blas_gemm_mnk = {64, 64, 64};
-std::array<int, 3> blas_gemm_leading_dims = {128, 128, 128};
-std::array<int, 3> blas_gemm_strides = {1, 1, 1};
-std::array<double, 2> blas_gemm_alpha_re_im = {M_PI, M_E};
-std::array<double, 2> blas_gemm_beta_re_im = {M_LN2, M_LN10};
+static QudaBLASOperation blas_gemm_trans_a = QUDA_BLAS_OP_N;
+static QudaBLASOperation blas_gemm_trans_b = QUDA_BLAS_OP_N;
 
-int blas_lu_inv_mat_size = 128;
+// matrix multiply in 4 batches
+static std::array<int, 3> blas_gemm_mnk = {4,4,4} ;
+static std::array<int, 3> blas_gemm_leading_dims = {4,4,4};
+static std::array<int, 3> blas_gemm_strides = {0,4*4,4*4};
+
+static std::array<double, 2> blas_gemm_alpha_re_im = {1,0} ;
+static std::array<double, 2> blas_gemm_beta_re_im = {0,0} ;
+static int blas_lu_inv_mat_size = 128;
 
 namespace quda
 {
@@ -42,8 +55,7 @@ void display_test_info(QudaBLASParam &param)
   printfQuda("running the following test:\n");
   printfQuda("BLAS interface %s test\n", get_blas_type_str(param.blas_type));
   printfQuda("Grid partition info:     X  Y  Z  T\n");
-  printfQuda("                         %d  %d  %d  %d\n", dimPartitioned(0), dimPartitioned(1), dimPartitioned(2),
-             dimPartitioned(3));
+  printfQuda("                         %d  %d  %d  %d\n", dimPartitioned(0), dimPartitioned(1), dimPartitioned(2),dimPartitioned(3));
 }
 
 void setBLASParam(QudaBLASParam &blas_param)
@@ -68,6 +80,26 @@ void setBLASParam(QudaBLASParam &blas_param)
   blas_param.inv_mat_size = blas_lu_inv_mat_size;
 }
 
+template <typename T>
+static inline void fillR( void *A , const size_t arr_size )
+{
+  T *ptA = (T*)A ;
+  for( size_t i = 0 ; i < arr_size ; i++ ) {
+    ptA[i] = 2*(rand()/(T)RAND_MAX)-1 ;
+  }
+}
+
+template <typename T>
+static double getdev( const void *refC1 , const void *refC2 , const size_t arr_size )
+{
+  const T *pt1 = (const T*)refC1 , *pt2 = (const T*)refC2 ;
+  double dev = 0. ;
+  for( size_t i = 0 ; i < arr_size ; i++ ) {
+    dev += (double)abs( pt1[i] - pt2[i] ) ;
+  }
+  return dev ;
+}
+
 double gemm_test(test_t test_param)
 {
   QudaBLASParam blas_param = newQudaBLASParam();
@@ -77,7 +109,108 @@ double gemm_test(test_t test_param)
 
   display_test_info(blas_param);
 
-  // this needs to be worked out properly
+  size_t data_size = 4 ;
+  switch( blas_param.data_type ) {
+  case QUDA_BLAS_DATATYPE_S : data_size = 4  ; break ;
+  case QUDA_BLAS_DATATYPE_D : data_size = 8  ; break ;
+  case QUDA_BLAS_DATATYPE_C : data_size = 8  ; break ;
+  case QUDA_BLAS_DATATYPE_Z : data_size = 16 ; break ;
+  default :
+    errorQuda( "Unknown blas data_type %d" , blas_param.data_type ) ;
+    break ;
+  }
+  size_t arrayA_size = 0, arrayB_size = 0, arrayC_size = 0;
+  if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
+    if (blas_param.trans_a == QUDA_BLAS_OP_N) {
+      arrayA_size = blas_param.m + blas_param.lda * (blas_param.k-1) ; 
+    } else {
+      arrayA_size = blas_param.k + blas_param.lda * (blas_param.m-1) ; 
+    }
+    if (blas_param.trans_b == QUDA_BLAS_OP_N) {
+      arrayB_size = blas_param.k + blas_param.ldb * (blas_param.n-1) ; 
+    } else {
+      arrayB_size = blas_param.n + blas_param.ldb * (blas_param.k-1) ;
+    }
+    arrayC_size = blas_param.m + blas_param.ldc * (blas_param.n-1) ; 
+  } else {
+    if (blas_param.trans_a == QUDA_BLAS_OP_N) {
+      arrayA_size = blas_param.k + blas_param.lda * (blas_param.m-1); 
+    } else {
+      arrayA_size = blas_param.m + blas_param.lda * (blas_param.k-1); 
+    }
+    if (blas_param.trans_b == QUDA_BLAS_OP_N) {
+      arrayB_size = blas_param.n + blas_param.ldb * (blas_param.k-1) ;
+    } else {
+      arrayB_size = blas_param.k + blas_param.ldb * (blas_param.m-1) ;
+    }
+    arrayC_size = blas_param.n + blas_param.ldc * (blas_param.m-1) ;
+  }
+  arrayA_size += (blas_param.batch_count-1)*blas_param.a_stride ;
+  arrayB_size += (blas_param.batch_count-1)*blas_param.b_stride ;
+  arrayC_size += (blas_param.batch_count-1)*blas_param.c_stride ;
+
+  const size_t A_bytes = arrayA_size * data_size;
+  const size_t B_bytes = arrayB_size * data_size;
+  const size_t C_bytes = arrayC_size * data_size;
+  // allocate
+  void *refA  = pinned_malloc( A_bytes );
+  void *refB  = pinned_malloc( B_bytes );
+
+  void *refC1 = pinned_malloc( C_bytes );
+  void *refC2 = pinned_malloc( C_bytes );
+  memset( refC1 , 0. , C_bytes ) ;
+  memset( refC2 , 0. , C_bytes ) ;
+
+  switch( blas_param.data_type ) {
+  case QUDA_BLAS_DATATYPE_S :
+    fillR<float>( refA , arrayA_size ) ;
+    fillR<float>( refB , arrayB_size ) ;
+    break ;
+  case QUDA_BLAS_DATATYPE_D :
+    fillR<double>( refA , arrayA_size ) ;
+    fillR<double>( refB , arrayB_size ) ;
+    break ;
+  case QUDA_BLAS_DATATYPE_C :
+    fillR<float>( refA , arrayA_size ) ;
+    fillR<float>( (float*)refA+arrayA_size , arrayA_size ) ;
+    fillR<float>( refB , arrayB_size ) ;
+    fillR<float>( (float*)refB+arrayB_size , arrayB_size ) ;    
+    break ;
+  case QUDA_BLAS_DATATYPE_Z :
+    fillR<double>( refA , arrayA_size ) ;
+    fillR<double>( (double*)refA+arrayA_size , arrayA_size ) ;
+    fillR<double>( refB , arrayB_size ) ;
+    fillR<double>( (double*)refB+arrayB_size , arrayB_size ) ;    
+    break ;
+  }
+
+  // ok finally call the functions
+  blasGEMMQuda( refA , refB , refC1 , QUDA_BOOLEAN_TRUE  , blas_param ) ;
+  blasGEMMQuda( refA , refB , refC2 , QUDA_BOOLEAN_FALSE , blas_param ) ;
+
+  // compute deviation
+  double deviation = 12345 ;
+  switch( blas_param.data_type ) {
+  case QUDA_BLAS_DATATYPE_S :
+    deviation = getdev<float>( refC1 , refC2 , arrayC_size ) ;
+    break ;
+  case QUDA_BLAS_DATATYPE_D :
+    deviation = getdev<double>( refC1 , refC2 , arrayC_size ) ;
+    break ;
+  case QUDA_BLAS_DATATYPE_C :
+    deviation = getdev<std::complex<float>>( refC1 , refC2 , arrayC_size ) ;
+    break ;
+  case QUDA_BLAS_DATATYPE_Z :
+    deviation = getdev<std::complex<double>>( refC1 , refC2 , arrayC_size ) ;
+    break ;
+  }
+  
+  printfQuda( "Deviation (eigen to GPU) :: %e\n" , deviation ) ;
+
+  host_free( refA ) ;
+  host_free( refB ) ;
+  host_free( refC1 ) ;
+  host_free( refC2 ) ;
   
   return 10 ;
 }

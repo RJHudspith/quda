@@ -174,13 +174,10 @@ namespace quda
 	if( location != QUDA_CPU_FIELD_LOCATION ) {
           errorQuda("StridedBatchGemm lapack eigen expects fields only on host");
 	}
-	
         long long flops = 0;
         timeval start, stop;
         gettimeofday(&start, NULL);
-
 	runBLASchecks( blas_param ) ;
-
         // Swap A and B if in column order
         if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
           std::swap(blas_param.m, blas_param.n);
@@ -189,7 +186,6 @@ namespace quda
           std::swap(blas_param.a_stride, blas_param.b_stride);
           std::swap(A_data, B_data);
         }
-
 	size_t data_size = 4 ;
 	switch( blas_param.data_type ) {
 	case QUDA_BLAS_DATATYPE_S : data_size = 4  ; break ;
@@ -200,7 +196,6 @@ namespace quda
 	  errorQuda("Unrecognized data type ^d\n" , blas_param.data_type ) ;
 	  break ;
 	}
-	
 	switch( blas_param.data_type ) {
 	case QUDA_BLAS_DATATYPE_Z : {
           typedef std::complex<double> Z;
@@ -212,33 +207,31 @@ namespace quda
 	case QUDA_BLAS_DATATYPE_C : {
           typedef std::complex<float> C;
           const C alpha = blas_param.alpha;
-          const C beta = blas_param.beta;
+          const C beta  = blas_param.beta;
           GEMM<MatrixXcf, C>(A_data, B_data, C_data, alpha, beta, blas_param);
           flops += blas_param.batch_count * FLOPS_CGEMM(blas_param.m, blas_param.n, blas_param.k);
 	} break ;
 	case QUDA_BLAS_DATATYPE_D : {
           typedef double D;
           const D alpha = (D)(static_cast<std::complex<double>>(blas_param.alpha).real());
-          const D beta = (D)(static_cast<std::complex<double>>(blas_param.beta).real());
+          const D beta  = (D)(static_cast<std::complex<double>>(blas_param.beta).real());
           GEMM<MatrixXd, D>(A_data, B_data, C_data, alpha, beta, blas_param);
           flops += blas_param.batch_count * FLOPS_SGEMM(blas_param.m, blas_param.n, blas_param.k);
 	} break ;
 	case QUDA_BLAS_DATATYPE_S : {
           typedef float S;
           const S alpha = (S)(static_cast<std::complex<float>>(blas_param.alpha).real());
-          const S beta = (S)(static_cast<std::complex<float>>(blas_param.beta).real());
+          const S beta  = (S)(static_cast<std::complex<float>>(blas_param.beta).real());
           GEMM<MatrixXf, S>(A_data, B_data, C_data, alpha, beta, blas_param);
           flops += blas_param.batch_count * FLOPS_SGEMM(blas_param.m, blas_param.n, blas_param.k);
 	} break ;	  
 	default :
           errorQuda("blasGEMM type %d not implemented\n", blas_param.data_type);
         }
-
         // Restore the swap of data pointers
         if (blas_param.data_order == QUDA_BLAS_DATAORDER_COL) {
           std::swap(A_data, B_data);
         }
-
         qudaDeviceSynchronize();
         gettimeofday(&stop, NULL);
         const long ds = stop.tv_sec - start.tv_sec , dus = stop.tv_usec - start.tv_usec;

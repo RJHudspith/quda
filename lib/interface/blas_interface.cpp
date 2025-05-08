@@ -21,11 +21,9 @@ void blasGEMMQuda( const void *arrayA, const void *arrayB, void *arrayC,
     getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
     blas_lapack::generic::stridedBatchGEMM(arrayA, arrayB, arrayC, blas_param, QUDA_CPU_FIELD_LOCATION);
     getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
-
   // otherwise we need to allocate on the device and copy over
   } else {
     getProfileBLAS().TPSTART(QUDA_PROFILE_INIT);
-    
     size_t data_size = 4 ;
     switch( blas_param.data_type ) {
     case QUDA_BLAS_DATATYPE_S : data_size = 4  ; break ;
@@ -67,7 +65,6 @@ void blasGEMMQuda( const void *arrayA, const void *arrayB, void *arrayC,
     arrayA_size += (blas_param.batch_count-1)*blas_param.a_stride ;
     arrayB_size += (blas_param.batch_count-1)*blas_param.b_stride ;
     arrayC_size += (blas_param.batch_count-1)*blas_param.c_stride ;
-    
     const size_t A_bytes = arrayA_size * data_size;
     const size_t B_bytes = arrayB_size * data_size;
     const size_t C_bytes = arrayC_size * data_size;

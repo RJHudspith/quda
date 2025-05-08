@@ -68,42 +68,6 @@ void copy_array(void *array_out, void *array_in, int batches, uint64_t array_siz
   }
 }
 
-// the dumbest possible option that doesn't rely on eigen and cuBLAS interface being right
-static double loopVerify( void *A_data, void *B_data, void *C_data_copy,
-			  QudaBLASParam blas_param )
-{
-  // row major batched, strided, non-transposed MMUL for doubles
-  double *pA = (double*)A_data , *pB = (double*)B_data , *pC = (double*)C_data_copy ; 
-  for( int p = 0 ; p < blas_param.batch_count ; p++ ) {
-    for( int m = 0 ; m < blas_param.m ; m++ ) {
-      for( int n = 0 ; n < blas_param.n ; n++ ) {
-	double Sum = 0. ;
-	for( int k = 0 ; k < blas_param.k ; k++ ) {
-	  Sum += pA[ k + blas_param.lda*m + p*blas_param.a_stride ]*pB[ n + blas_param.ldb*k + blas_param.b_stride ] ;
-	}
-	pC[ n + m*blas_param.ldc + p*blas_param.c_stride ] = Sum ;
-      }
-    }
-  }
-}
-
-double blasGEMMQudaVerify(void *arrayA, void *arrayB, void *arrayC,
-			  uint64_t refA_size, uint64_t refB_size, uint64_t refC_size,
-			  QudaBLASParam blas_param)
-{
-  // data is on the host
-  double C_eigen[ refC_size ] , C_loop[ refC_size ] ;
-
-  loopVerify( arrayA , arrayB , C_loop , blas_param ) ;
-
-  quda::blas_lapack::generic::stridedBatchGEMM( arrayA, arrayB , arrayC, blas_param, QUDA_CPU_FIELD_LOCATION ) ;
-
-  // do the copies to the GPU
-
-  // blah blah blah
-  
-}
-
 double blasLUInvEigenVerify(void *ref_array, void *dev_inv_array, uint64_t array_size, QudaBLASParam *blas_param)
 {
 
