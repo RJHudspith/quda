@@ -212,7 +212,7 @@ double gemm_test(test_t test_param)
   host_free( refC1 ) ;
   host_free( refC2 ) ;
   
-  return 10 ;
+  return deviation ;
 }
 
 double lu_inv_test(test_t test_param)
