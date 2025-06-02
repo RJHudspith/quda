@@ -276,17 +276,6 @@ namespace quda
           std::swap(blas_param.a_stride, blas_param.b_stride);
           std::swap(A_data, B_data);
         }
-	// switch for setting data_size from dattype
-	size_t data_size = 4 ;
-	switch( blas_param.data_type ) {
-	case QUDA_BLAS_DATATYPE_S : data_size = 4  ; break ;
-	case QUDA_BLAS_DATATYPE_D : data_size = 8  ; break ;
-	case QUDA_BLAS_DATATYPE_C : data_size = 8  ; break ;
-	case QUDA_BLAS_DATATYPE_Z : data_size = 16 ; break ;
-	default :
-          errorQuda("cublasGEMM type %d not implemented\n", blas_param.data_type);
-	  break ;
-	}
         cublasOperation_t trans_a = CUBLAS_OP_N;
         switch (blas_param.trans_a) {
         case QUDA_BLAS_OP_N: trans_a = CUBLAS_OP_N; break;
