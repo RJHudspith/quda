@@ -260,26 +260,14 @@ namespace quda
         gettimeofday(&start, NULL);
 	// run a sanity check on parameters and swap things in the params and A and B if we aren't
 	// column-major as that is the default for hipBLAS
-	runBLAScheck( blas_param ) ;
+	runBLASchecks( blas_param ) ;
 	if (blas_param.data_order == QUDA_BLAS_DATAORDER_ROW) {
           std::swap(blas_param.m, blas_param.n);
           std::swap(blas_param.lda, blas_param.ldb);
           std::swap(blas_param.trans_a, blas_param.trans_b);
-          std::swap(blas_param.a_offset, blas_param.b_offset);
           std::swap(blas_param.a_stride, blas_param.b_stride);
           std::swap(A_data, B_data);
         }
-	// switch for setting data_size from dattype
-        size_t data_size = 4 ;
-        switch( blas_param.data_type ) {
-        case QUDA_BLAS_DATATYPE_S : data_size = 4  ; break ;
-        case QUDA_BLAS_DATATYPE_D : data_size = 8  ; break ;
-        case QUDA_BLAS_DATATYPE_C : data_size = 8  ; break ;
-        case QUDA_BLAS_DATATYPE_Z : data_size = 16 ; break ;
-        default :
-          errorQuda("cublasGEMM type %d not implemented\n", blas_param.data_type);
-          break ;
-	}
         hipblasOperation_t trans_a = HIPBLAS_OP_N;
         switch (blas_param.trans_a) {
         case QUDA_BLAS_OP_N: trans_a = HIPBLAS_OP_N; break;
@@ -303,11 +291,11 @@ namespace quda
           const std::complex<double> be = static_cast<const std::complex<double>>(blas_param.beta);
           const Z alpha(al.real(), al.imag()), beta(be.real(), be.imag());
 	  error = hipblasZgemmStridedBatched(handle, trans_a, trans_b, blas_param.m, blas_param.n, blas_param.k, &alpha,
-					     (Z*)A_d, blas_param.lda, blas_param.a_stride,
-					     (Z*)B_d, blas_param.ldb, blas_param.b_stride, &beta,
-					     (Z*)C_d, blas_param.ldc, blas_param.c_stride, blas_param.batch_count);
+					     (Z*)A_data, blas_param.lda, blas_param.a_stride,
+					     (Z*)B_data, blas_param.ldb, blas_param.b_stride, &beta,
+					     (Z*)C_data, blas_param.ldc, blas_param.c_stride, blas_param.batch_count);
 	  if (error != HIPBLAS_STATUS_SUCCESS) errorQuda("\nError in cuBLASZGEMMBatched, error code = %d\n", error);
-          flops += batch * FLOPS_CGEMM(blas_param.m, blas_param.n, blas_param.k);
+          flops += blas_param.batch_count * FLOPS_CGEMM(blas_param.m, blas_param.n, blas_param.k);
         } break ;
 	case QUDA_BLAS_DATATYPE_C : {
           typedef hipblasComplex C;
@@ -315,33 +303,33 @@ namespace quda
           const std::complex<float> be = static_cast<const std::complex<float>>(blas_param.beta);
           const C alpha(al.real(), al.imag()), beta(be.real(), be.imag());
 	  error = hipblasCgemmStridedBatched(handle, trans_a, trans_b, blas_param.m, blas_param.n, blas_param.k, &alpha,
-					     (C*)A_d, blas_param.lda, blas_param.a_stride,
-					     (C*)B_d, blas_param.ldb, blas_param.b_stride, &beta,
-					     (C*)C_d, blas_param.ldc, blas_param.c_stride, blas_param.batch_count);
+					     (C*)A_data, blas_param.lda, blas_param.a_stride,
+					     (C*)B_data, blas_param.ldb, blas_param.b_stride, &beta,
+					     (C*)C_data, blas_param.ldc, blas_param.c_stride, blas_param.batch_count);
 	  if (error != HIPBLAS_STATUS_SUCCESS) errorQuda("\nError in cuBLASCGEMMBatched, error code = %d\n", error);
-          flops += batch * FLOPS_CGEMM(blas_param.m, blas_param.n, blas_param.k);
+          flops += blas_param.batch_count * FLOPS_CGEMM(blas_param.m, blas_param.n, blas_param.k);
         } break ;
 	case QUDA_BLAS_DATATYPE_D : {
           typedef double D;
           const D alpha = (D)(static_cast<std::complex<double>>(blas_param.alpha).real());
           const D beta  = (D)(static_cast<std::complex<double>>(blas_param.beta).real());
 	  error = hipblasDgemmStridedBatched(handle, trans_a, trans_b, blas_param.m, blas_param.n, blas_param.k, &alpha,
-					     (D*)A_d, blas_param.lda, blas_param.a_stride,
-					     (D*)B_d, blas_param.ldb, blas_param.b_stride, &beta,
-					     (D*)C_d, blas_param.ldc, blas_param.c_stride, blas_param.batch_count);
+					     (D*)A_data, blas_param.lda, blas_param.a_stride,
+					     (D*)B_data, blas_param.ldb, blas_param.b_stride, &beta,
+					     (D*)C_data, blas_param.ldc, blas_param.c_stride, blas_param.batch_count);
 	  if (error != HIPBLAS_STATUS_SUCCESS) errorQuda("\nError in cuBLASDGEMMBatched, error code = %d\n", error);
-          flops += batch * FLOPS_SGEMM(blas_param.m, blas_param.n, blas_param.k);
+          flops += blas_param.batch_count * FLOPS_SGEMM(blas_param.m, blas_param.n, blas_param.k);
 	} break ;
 	case QUDA_BLAS_DATATYPE_S : {
 	  typedef float S;
           const S alpha = (S)(static_cast<std::complex<float>>(blas_param.alpha).real());
           const S beta  = (S)(static_cast<std::complex<float>>(blas_param.beta).real());
 	  error = hipblasSgemmStridedBatched(handle, trans_a, trans_b, blas_param.m, blas_param.n, blas_param.k, &alpha,
-					     (S*)A_d, blas_param.lda, blas_param.a_stride,
-					     (S*)B_d, blas_param.ldb, blas_param.b_stride, &beta,
-					     (S*)C_d, blas_param.ldc, blas_param.c_stride, blas_param.batch_count);
+					     (S*)A_data, blas_param.lda, blas_param.a_stride,
+					     (S*)B_data, blas_param.ldb, blas_param.b_stride, &beta,
+					     (S*)C_data, blas_param.ldc, blas_param.c_stride, blas_param.batch_count);
 	  if (error != HIPBLAS_STATUS_SUCCESS) errorQuda("\nError in cuBLASSGEMMStridedBatched, error code = %d\n", error);
-          flops += batch * FLOPS_SGEMM(blas_param.m, blas_param.n, blas_param.k);
+          flops += blas_param.batch_count * FLOPS_SGEMM(blas_param.m, blas_param.n, blas_param.k);
 	} break ;
 	default :
           errorQuda("hipblasGEMM type %d not implemented\n", blas_param.data_type);
