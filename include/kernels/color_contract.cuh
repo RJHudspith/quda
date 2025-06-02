@@ -19,13 +19,8 @@ namespace quda {
     {
       using real = typename Arg::real;
       using Vector = ColorSpinor<real, Arg::nColor, Arg::nSpin>;
-
-      complex<real> res;
       Vector x = arg.x(x_cb, parity);
       Vector y = arg.y(x_cb, parity);
-
-      // Is it safe to use getIndexFull here?
-      //arg.s[getIndexFull(x_cb, arg.X, parity)] = innerProduct(x, y, 0, 0) ;
       arg.s[x_cb + parity*arg.threads.x] = innerProduct(x, y, 0, 0) ;
     }
   };
@@ -68,11 +63,8 @@ namespace quda {
     {
       using real = typename Arg::real;
       using Vector = ColorSpinor<real, Arg::nColor, Arg::nSpin>;
-
-      complex<real> res;
       Vector x = arg.x(x_cb, parity);
       Vector y = arg.y(x_cb, parity);
-
       // Compute the inner product over color
       arg.s[x_cb + parity*arg.threads.x] = colorContract(x, y, 0, 0);
     }

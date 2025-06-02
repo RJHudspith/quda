@@ -182,6 +182,9 @@ double gemm_test(test_t test_param)
     fillR<double>( refB , arrayB_size ) ;
     fillR<double>( (double*)refB+arrayB_size , arrayB_size ) ;    
     break ;
+  default :
+    errorQuda( "Unknown blas data_type %d" , blas_param.data_type ) ;
+    break ;
   }
 
   // ok finally call the functions
@@ -202,6 +205,9 @@ double gemm_test(test_t test_param)
     break ;
   case QUDA_BLAS_DATATYPE_Z :
     deviation = getdev<std::complex<double>>( refC1 , refC2 , arrayC_size ) ;
+    break ;
+  default :
+    errorQuda( "Unknown blas data_type %d" , blas_param.data_type ) ;
     break ;
   }
   

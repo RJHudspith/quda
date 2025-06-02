@@ -63,15 +63,15 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
   std::vector<ColorSpinorField> quda_q1(n1), quda_q2(n2), quda_q3(n3) ;
   for(int i=0; i<n1; i++) {
     quda_q1[i] = ColorSpinorField(cuda_q1_param) ;
-    for( int j = 0 ; j < nEv ; j++ ) coeffs1[j*n1+i] = host_coeffs1[j+i*nEv] ;
+    for( int j = 0 ; j < nEv ; j++ ) coeffs1[j*n1+i] = (std::complex<double>)host_coeffs1[j+i*nEv] ;
   }
   for(int i=0; i<n2; i++) {
     quda_q2[i] = ColorSpinorField(cuda_q2_param) ;
-    for( int j = 0 ; j < nEv ; j++ ) coeffs2[j*n2+i] = host_coeffs2[j+i*nEv] ;
+    for( int j = 0 ; j < nEv ; j++ ) coeffs2[j*n2+i] = (std::complex<double>)host_coeffs2[j+i*nEv] ;
   }
   for(int i=0; i<n3; i++) {
     quda_q3[i] = ColorSpinorField(cuda_q2_param) ;
-    for( int j = 0 ; j < nEv ; j++ ) coeffs3[j*n3+i] = host_coeffs3[j+i*nEv] ;
+    for( int j = 0 ; j < nEv ; j++ ) coeffs3[j*n3+i] = (std::complex<double>)host_coeffs3[j+i*nEv] ;
   }
   // device temporaries, momentum, and return buffers. All pretty small
   const size_t data_tmp_bytes = blockSizeMomProj*nSites*2*quda_q3[0].Precision();
@@ -317,10 +317,10 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   void *d_q3      = pool_device_malloc(data_q3_bytes);
   if (getVerbosity() >= QUDA_VERBOSE) {
     printfQuda("mtb %gGB | q3 %gGB | coeffs3 %gGB \n",
-	       data_tmp_bytes/OneGB, data_q3_bytes/OneGB, data_coeffs3_bytes/OneGB,
-	       "coeffs1 %gGB | coeffs2 %gGB | ret %gGB | total %gGB\n",
-	       data_coeffs1_bytes/OneGB, data_coeffs2_bytes/OneGB,
-	       data_ret_bytes/OneGB, total_bytes/OneGB);
+	       data_tmp_bytes/OneGB, data_q3_bytes/OneGB, data_coeffs3_bytes/OneGB);
+    printfQuda( "coeffs1 %gGB | coeffs2 %gGB | ret %gGB | total %gGB\n",
+		data_coeffs1_bytes/OneGB, data_coeffs2_bytes/OneGB,
+		data_ret_bytes/OneGB, total_bytes/OneGB);
   }
   // ZGEMM INIT
   QudaBLASParam cublas_param_1 = newQudaBLASParam();
