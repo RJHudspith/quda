@@ -146,8 +146,6 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
 	getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
 	nInBlock++;
 	if (nInBlock == blockSizeMomProj ) {
-	  // To gauge how to block the calls to remove launch latency.
-	  printfQuda("dil1 = %d, dil2 = %d, dil3 = %d, nInBlock = %d\n", dil1, dil2, dil3, nInBlock);
 	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);	  
 	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp,
 						(std::complex<double>*)d_ret + X[3]*((dil1*n2 + dil2)*n3 + dil3 - nInBlock + 1),
