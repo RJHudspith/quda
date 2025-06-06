@@ -40,8 +40,8 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
   if( blockSizeMomProj > (n1*n2*n3) ) {
     errorQuda( "Block size mom proj %d > %d\n", blockSizeMomProj, n1*n2*n3 ) ;
   }
-  const int nSp    = X[0]*X[1]*X[2] ;
-  const int nSites = nSp*X[3] ;
+  const size_t nSp    = X[0]*X[1]*X[2] ;
+  const size_t nSites = nSp*X[3] ;
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_INIT);
   const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
   ColorSpinorParam cpu_evec_param( host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION );
@@ -74,9 +74,9 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
     for( int j = 0 ; j < nEv ; j++ ) coeffs3[j*n3+i] = (std::complex<double>)host_coeffs3[j+i*nEv] ;
   }
   // device temporaries, momentum, and return buffers. All pretty small
-  const size_t data_tmp_bytes = blockSizeMomProj*nSites*2*quda_q3[0].Precision();
-  const size_t data_ret_bytes = X[3]*nMom*n1*n2*n3*2*quda_q3[0].Precision();
-  const size_t data_mom_bytes = nMom*nSp*2*quda_q3[0].Precision();
+  const size_t data_tmp_bytes = (size_t)blockSizeMomProj*nSites*sizeof(double _Complex) ;
+  const size_t data_ret_bytes = (size_t)(X[3]*nMom)*(size_t)(n1*n2*n3)*sizeof(double _Complex) ;
+  const size_t data_mom_bytes = (size_t)(nMom*nSp)*sizeof(double _Complex) ;
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
@@ -215,9 +215,9 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
     quda_evec[i] = evec[i] ; // CPU -> GPU
   }
   // Device side temp array (complBuf in chroma_laph)
-  const size_t data_tmp_bytes = blockSizeMomProj*nSites*2*quda_evec[0].Precision();
-  const size_t data_ret_bytes = nEvChoose3*nMom*X[3]*2*quda_evec[0].Precision();
-  const size_t data_mom_bytes = nMom*nSp*2*quda_evec[0].Precision();
+  const size_t data_tmp_bytes = blockSizeMomProj*nSites*sizeof(double _Complex) ;
+  const size_t data_ret_bytes = (size_t)nEvChoose3*nMom*X[3]*sizeof(double _Complex) ;
+  const size_t data_mom_bytes = (size_t)(nMom*nSp)*sizeof(double _Complex) ;
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
