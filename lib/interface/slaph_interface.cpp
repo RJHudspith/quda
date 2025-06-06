@@ -37,8 +37,8 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
   if( sizeof(Complex) != sizeof(double _Complex) ) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
-  if( (n1*n2*n3)%blockSizeMomProj != 0 ) {
-    errorQuda( "Block size mom proj needs to divide %d %d\n" , n1*n2*n3 , blockSizeMomProj ) ;
+  if( blockSizeMomProj > (n1*n2*n3) ) {
+    errorQuda( "Block size mom proj %d > %d\n", blockSizeMomProj, n1*n2*n3 ) ;
   }
   const int nSp    = X[0]*X[1]*X[2] ;
   const int nSites = nSp*X[3] ;
@@ -134,7 +134,7 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
   // Create device diquark vector
   ColorSpinorParam cuda_diq_param( cuda_evec_param , inv_param , QUDA_CUDA_FIELD_LOCATION ) ;
   ColorSpinorField quda_diq( cuda_diq_param ) ;
-  int nInBlock = 0;
+  int nInBlock = 0 , blockStart = 0 ;
   for( int dil1=0; dil1<n1; dil1++ ) {
     for( int dil2=0; dil2<n2; dil2++ ) {
       getProfileColorCross().TPSTART(QUDA_PROFILE_COMPUTE);
@@ -146,15 +146,23 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
 	getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
 	nInBlock++;
 	if (nInBlock == blockSizeMomProj ) {
-	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);	  
-	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp,
-						(std::complex<double>*)d_ret + X[3]*((dil1*n2 + dil2)*n3 + dil3 - nInBlock + 1),
+	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
+	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (std::complex<double>*)d_ret + X[3]*blockStart,
 						cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
+	  blockStart += nInBlock ;
 	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);	  
 	  nInBlock = 0;
 	}
       }
     }
+  }
+  // overspill is less efficient than exact division but more flexible
+  if( nInBlock > 0 ) {
+    getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
+    cublas_param_mom_sum.batch_count = nInBlock;
+    blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (std::complex<double>*)d_ret + X[3]*blockStart,
+					  cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
+    getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
   }
   // Copy return array back to host
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_D2H);
@@ -185,9 +193,9 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
-  if( nEvChoose3%blockSizeMomProj != 0 ) {
-    errorQuda("Block size mom proj needs to divide %zu %d", nEvChoose3 , blockSizeMomProj);
-  }  
+  if( (size_t)blockSizeMomProj > nEvChoose3 ) {
+    errorQuda("Block size mom proj %zu > %zu", (size_t)blockSizeMomProj, nEvChoose3);
+  }
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_INIT);
   // Parameter object describing evecs
   const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
@@ -267,6 +275,13 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
       }
     }
   }
+  if( nInBlock > 0 ) {
+    cublas_param_mom_sum.batch_count = nInBlock;
+    getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
+    blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (std::complex<double>*)d_ret+X[3]*blockStart,
+					   cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION );
+    getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);    
+  }
   // Copy return array back to host
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_D2H);
   qudaMemcpy( return_array, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost );
@@ -290,10 +305,6 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
 {
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_TOTAL);
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT); 
-  // number of EV indices (in first position) that this rank deals with
-  const int nRanks = quda::comm_size();  
-  const int nSubEv = nEv / nRanks;
-  const int iRank  = quda::comm_rank();
   // check we are safe to cast into a Complex (= std::complex<double>)
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
@@ -301,8 +312,8 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   const size_t data_coeffs1_bytes = n1*nEv*2*QUDA_DOUBLE_PRECISION;
   const size_t data_coeffs2_bytes = n2*nEv*2*QUDA_DOUBLE_PRECISION;
   const size_t data_coeffs3_bytes = n3*nEv*2*QUDA_DOUBLE_PRECISION;  
-  const size_t data_q3_bytes      = nSubEv*nEv*n3*2*QUDA_DOUBLE_PRECISION;
-  const size_t data_tmp_bytes     = std::max( nSubEv*nEv*nEv , nSubEv*n2*n3 )*2*QUDA_DOUBLE_PRECISION ;
+  const size_t data_q3_bytes      = nEv*nEv*n3*2*QUDA_DOUBLE_PRECISION;
+  const size_t data_tmp_bytes     = std::max( nEv*nEv*nEv , nEv*n2*n3 )*2*QUDA_DOUBLE_PRECISION ;
   const size_t data_ret_bytes     = nMom*n1*n2*n3*2*QUDA_DOUBLE_PRECISION;
   const size_t total_bytes = data_tmp_bytes + data_q3_bytes + data_coeffs3_bytes
     +data_coeffs1_bytes+data_coeffs2_bytes+data_tmp_bytes+data_ret_bytes;
@@ -333,7 +344,7 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   cublas_param_1.a_stride = nEv*nEv ;
   cublas_param_1.b_stride = 0 ;
   cublas_param_1.c_stride = n3*nEv ;
-  cublas_param_1.batch_count = nSubEv;
+  cublas_param_1.batch_count = nEv;
   cublas_param_1.alpha = 1.0 ; cublas_param_1.beta = 0.0 ;
   cublas_param_1.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_1.data_type = QUDA_BLAS_DATATYPE_Z;
@@ -349,7 +360,7 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   cublas_param_2.a_stride = 0 ;
   cublas_param_2.b_stride = n3*nEv ;
   cublas_param_2.c_stride = n2*n3 ;
-  cublas_param_2.batch_count = nSubEv ;
+  cublas_param_2.batch_count = nEv ;
   cublas_param_2.alpha = 1.0 ; cublas_param_2.beta = 0.0 ;
   cublas_param_2.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_2.data_type = QUDA_BLAS_DATATYPE_Z;
@@ -358,7 +369,7 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   cublas_param_3.trans_a = cublas_param_3.trans_b = QUDA_BLAS_OP_N;
   cublas_param_3.m = n1;
   cublas_param_3.n = n3;
-  cublas_param_3.k = nSubEv;
+  cublas_param_3.k = nEv;
   cublas_param_3.lda = nEv;
   cublas_param_3.ldb = n2*n3;
   cublas_param_3.ldc = n2*n3;
@@ -380,14 +391,14 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
   // Compute ZGEMMs
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_COMPUTE);  
   for(int p=0; p<nMom; p++) {
-    qudaMemcpy( d_tmp, (double _Complex*)host_mode_trip_buf+p*nSubEv*nEv*nEv ,
+    qudaMemcpy( d_tmp, (double _Complex*)host_mode_trip_buf+p*nEv*nEv*nEv ,
 	        data_tmp_bytes, qudaMemcpyHostToDevice ) ;
     blas_lapack::native::stridedBatchGEMM( d_tmp, d_coeffs3, d_q3, cublas_param_1,
 					   QUDA_CUDA_FIELD_LOCATION ) ;
     blas_lapack::native::stridedBatchGEMM( d_coeffs2, d_q3, d_tmp,
 					   cublas_param_2, QUDA_CUDA_FIELD_LOCATION);
-    blas_lapack::native::stridedBatchGEMM( (double _Complex*)d_coeffs1 + iRank*nSubEv,
-					   d_tmp, (double _Complex*)d_ret + p*n1*n2*n3 ,
+    blas_lapack::native::stridedBatchGEMM( (double _Complex*)d_coeffs1, d_tmp,
+					   (double _Complex*)d_ret + p*n1*n2*n3 ,
 					   cublas_param_3, QUDA_CUDA_FIELD_LOCATION);
   }
   getProfileBaryonKernelModeTripletsB().TPSTOP(QUDA_PROFILE_COMPUTE);
@@ -410,7 +421,7 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
 
 // new GPU interface with better behaviour
 void laphCurrentKernel( const int n1, const int n2, const int nMom,
-			const int block_size_mom_proj,
+			const int blockSizeMomProj,
 			void **host_quark,
 			void **host_quark_bar,
 			const double _Complex *host_mom,
@@ -424,8 +435,8 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
-  if( (n2*n1)%block_size_mom_proj != 0 ) {
-    errorQuda("I only support block sizes that are factors of n1*n2") ;
+  if( blockSizeMomProj > (n1*n2) ) {
+    errorQuda("block_size_mom_proj %d > (n1*n2) %d" , blockSizeMomProj, n1*n2 ) ;
   }
   // Some common variables
   const size_t n_spatial_sites = X[0]*X[1]*X[2];
@@ -449,7 +460,7 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   cuda_quark_bar_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);  
   // Device array to hold the entire return array
   const size_t data_ret_bytes = nMom*X[3]*n1*n2*2*precision;
-  const size_t data_tmp_bytes = n_sites*2*precision*block_size_mom_proj;
+  const size_t data_tmp_bytes = n_sites*2*precision*blockSizeMomProj;
   const size_t data_mom_bytes = nMom*n_spatial_sites*2*precision;
   void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
@@ -467,7 +478,7 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   cublas_param_mom_sum.a_stride = 0 ; // mom stays the same
   cublas_param_mom_sum.b_stride = n_spatial_sites*X[3] ;
   cublas_param_mom_sum.c_stride = X[3]*nMom ;
-  cublas_param_mom_sum.batch_count = block_size_mom_proj ;
+  cublas_param_mom_sum.batch_count = blockSizeMomProj ;
   cublas_param_mom_sum.alpha = 1.0; cublas_param_mom_sum.beta = 0.0;
   cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
   cublas_param_mom_sum.data_type = QUDA_BLAS_DATATYPE_Z;
@@ -483,7 +494,7 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
   getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_H2D);
   // doing too much work here as color contract (di1,dil2) == (dil2,dil1)*
   // so we could do a conjugated GEMM on the lower diagonal for the mom proj - TODO
-  int n_in_block = 0 , idx_last = 0 ;
+  int nInBlock = 0 , blockStart = 0 ;
   for (int dil1=0; dil1<n1; dil1++) {
     cpu_quark_bar_param.v = host_quark_bar[dil1] ;
     ColorSpinorField quark_bar(cpu_quark_bar_param) ;
@@ -492,20 +503,23 @@ void laphCurrentKernel( const int n1, const int n2, const int nMom,
     // just block dil2
     for (int dil2=0; dil2<n2; dil2++){
       getProfileCurrentKernel().TPSTART(QUDA_PROFILE_COMPUTE);
-      innerProductQuda( quda_quark_bar, quda_quark[dil2], (std::complex<double>*)d_tmp+n_sites*n_in_block );
+      innerProductQuda( quda_quark_bar, quda_quark[dil2], (std::complex<double>*)d_tmp+n_sites*nInBlock );
       getProfileCurrentKernel().TPSTOP(QUDA_PROFILE_COMPUTE);
-      n_in_block++ ;
-      if( n_in_block == block_size_mom_proj ) {
+      nInBlock++ ;
+      if( nInBlock == blockSizeMomProj ) {
 	getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
-	blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp,
-					       (std::complex<double>*)d_ret+idx_last*X[3]*nMom,
-					       cublas_param_mom_sum,
-					       QUDA_CUDA_FIELD_LOCATION);
-	idx_last += block_size_mom_proj ;
-	n_in_block = 0 ;
+	blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (std::complex<double>*)d_ret+blockStart*X[3]*nMom,
+					       cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
+	blockStart += nInBlock ;
+	nInBlock = 0 ;
 	getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
       }
     }
+  }
+  if( nInBlock > 0 ) {
+    cublas_param_mom_sum.batch_count = nInBlock ;
+    blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (std::complex<double>*)d_ret+blockStart*X[3]*nMom,
+					   cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
   }
   // Copy device data back to host
   qudaMemcpy( return_array, d_ret, data_ret_bytes, qudaMemcpyDeviceToHost );

@@ -1913,9 +1913,9 @@ extern "C" {
    * @param[in] n2 number of dilutions for q2
    * @param[in] n3 number of dilutions for q3
    * @param[in] nMom number of momenta
-   * @param[in] host_coeffs1
-   * @param[in] host_coeffs2
-   * @param[in] host_coeffs3
+   * @param[in] host_coeffs1 -> stochastic noises for the Evs
+   * @param[in] host_coeffs2 -> stochastic noises for the Evs
+   * @param[in] host_coeffs3 -> stochastic noises for the Evs
    * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
    * @param[in] nEv the number of eigenmodes
    * @param[in] host_evec the eigenvectors on the host
@@ -1948,7 +1948,7 @@ extern "C" {
    * @param[in] X Lattice dimensions
    */  
   void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv,
-					    const int block_size_mom_proj,
+					    const int blockSizeMomProj,
 					    void **host_evec, 
 					    const double _Complex *host_mom,
 					    QudaInvertParam inv_param,
@@ -1990,7 +1990,7 @@ extern "C" {
    * @param[in] X Lattice dimensions
    */
   void laphCurrentKernel( const int n1, const int n2, const int nMom,
-			  const int block_size_mom_proj,
+			  const int blockSizeMomProj,
 			  void **host_quark, 
 			  void **host_quark_bar, 
 			  const double _Complex *host_mom,
@@ -2006,4 +2006,3 @@ extern "C" {
 #undef double_complex
 
 /* #include <quda_new_interface.h> */
-
