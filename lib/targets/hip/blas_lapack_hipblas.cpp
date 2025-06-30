@@ -102,7 +102,12 @@ namespace quda
         memset(info_array, '0', batch * sizeof(int)); // silence memcheck warnings
 
         if (prec == QUDA_SINGLE_PRECISION) {
+#if hipblasVersionMajor >= 3
+          typedef hipComplex C;
+#else
+          // The hipblas v1 interface, deprecated in v2, and removed in v3
           typedef hipblasComplex C;
+#endif
           C **A_array = static_cast<C **>(pool_device_malloc(2 * batch * sizeof(C *)));
           C **Ainv_array = A_array + batch;
           C **A_array_h = static_cast<C **>(pool_pinned_malloc(2 * batch * sizeof(C *)));
@@ -306,8 +311,12 @@ namespace quda
 	  if (error != HIPBLAS_STATUS_SUCCESS) errorQuda("\nError in cuBLASZGEMMBatched, error code = %d\n", error);
           flops += blas_param.batch_count * FLOPS_CGEMM(blas_param.m, blas_param.n, blas_param.k);
         } break ;
-	case QUDA_BLAS_DATATYPE_C : {
+        case QUDA_BLAS_DATATYPE_C : {
+          #if hipblasVersionMajor >= 3
+          typedef hipComplex C;
+          #else
           typedef hipblasComplex C;
+          #endif
           const std::complex<float> al = static_cast<const std::complex<float>>(blas_param.alpha);
           const std::complex<float> be = static_cast<const std::complex<float>>(blas_param.beta);
           const C alpha(al.real(), al.imag()), beta(be.real(), be.imag());
