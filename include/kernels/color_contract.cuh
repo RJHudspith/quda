@@ -19,8 +19,7 @@ namespace quda {
     {
       using real = typename Arg::real;
       using Vector = ColorSpinor<real, Arg::nColor, Arg::nSpin>;
-      Vector x = arg.x(x_cb, parity);
-      Vector y = arg.y(x_cb, parity);
+      Vector x = arg.x(x_cb, parity), y = arg.y(x_cb, parity);
       arg.s[x_cb + parity*arg.threads.x] = innerProduct(x, y, 0, 0) ;
     }
   };

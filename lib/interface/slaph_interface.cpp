@@ -70,7 +70,7 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
     for( int j = 0 ; j < nEv ; j++ ) coeffs2[j*n2+i] = (std::complex<double>)host_coeffs2[j+i*nEv] ;
   }
   for(int i=0; i<n3; i++) {
-    quda_q3[i] = ColorSpinorField(cuda_q2_param) ;
+    quda_q3[i] = ColorSpinorField(cuda_q3_param) ;
     for( int j = 0 ; j < nEv ; j++ ) coeffs3[j*n3+i] = (std::complex<double>)host_coeffs3[j+i*nEv] ;
   }
   // device temporaries, momentum, and return buffers. All pretty small
