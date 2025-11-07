@@ -1936,7 +1936,7 @@ extern "C" {
 			 const int nEv,
 			 void **host_evec,
 			 QudaInvertParam inv_param,
-			 void *return_array,
+			 double _Complex *return_array,
 			 const int blockSizeMomProj,
 			 const int X[4] ) ;
 
@@ -1999,7 +1999,7 @@ extern "C" {
 			  void **host_quark_bar, 
 			  const double _Complex *host_mom,
 			  QudaInvertParam inv_param,
-			  void *return_array,
+			  double _Complex *return_array,
 			  const int X[4] );
 
 #ifdef __cplusplus
