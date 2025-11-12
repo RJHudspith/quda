@@ -1940,6 +1940,32 @@ extern "C" {
 			 const int blockSizeMomProj,
 			 const int X[4] ) ;
 
+    /**
+   * @brief computes the meson doublets for distillation
+   * @param[in] n1 number of dilutions for q1
+   * @param[in] n2 number of dilutions for q2
+   * @param[in] nMom number of momenta
+   * @param[in] blockSizeMomProj the factor that divides n1.n2 to batch the DFT
+   * @param[in] nEv number of eigenvectors
+   * @param[in] host_evec are the laplacian evecs
+   * @param[in] inv_param Quda Inversion parameters
+   * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
+   * @param[out] the returned DFTed array
+   * @param[in] X Lattice dimensions
+   */
+  void laphMesonKernel( const int n1,
+			const int n2,
+			const int nMom,
+			const int blockSizeMomProj,
+			const double _Complex *host_coeffs1, 
+			const double _Complex *host_coeffs2,
+			const int nEv,
+			void **host_evec,
+			const double _Complex *host_mom,
+			QudaInvertParam inv_param,
+			double _Complex *return_array,
+			const int X[4]) ;
+
   /**
    * @brief computes the laph baryon Mode Triplets
    * @param[in] nMom number of momenta
@@ -1981,27 +2007,25 @@ extern "C" {
 					    double _Complex *return_array);
 
   /**
-   * @brief computes the laphBaryonKernel
-   * @param[in] n1 number of dilutions for q1
-   * @param[in] n2 number of dilutions for q2
+   * @brief computes the meson doublets for distillation
    * @param[in] nMom number of momenta
-   * @param[in] blockSizeMomProj the factor that divides n1.n2 to batch the DFT
-   * @param[in] host_quark the quark (sans spin indices) for the | >
-   * @param[in] host_quark_bar the quark (sans spin indices, should not be conjugated) for the < |
-   * @param[in] inv_param Quda Inversion parameters
    * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
+   * @param[in] nEv number of eigenvectors
+   * @param[in] host_evec are the laplacian evecs
+   * @param[in] inv_param Quda Inversion parameters
    * @param[out] the returned DFTed array
+   * @param[in] blockSizeMomProj the factor that divides n1.n2 to batch the DFT
    * @param[in] X Lattice dimensions
    */
-  void laphCurrentKernel( const int n1, const int n2, const int nMom,
-			  const int blockSizeMomProj,
-			  void **host_quark, 
-			  void **host_quark_bar, 
-			  const double _Complex *host_mom,
-			  QudaInvertParam inv_param,
-			  double _Complex *return_array,
-			  const int X[4] );
-
+  void laphMesonKernelComputeModeDoublet( const int nMom,
+					  const double _Complex *host_mom,
+					  const int nEv,
+					  void **host_evec,
+					  QudaInvertParam inv_param,
+					  double _Complex *return_array,
+					  const int blockSizeMomProj,
+					  const int X[4]) ;
+    
 #ifdef __cplusplus
 }
 #endif

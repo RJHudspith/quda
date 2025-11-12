@@ -225,7 +225,6 @@ static TimeProfile profileGFlow("gFlowQuda");
 
 //!< Profiler for gFlowQuda
 static TimeProfile profileAdjGFlowSafe("AdjgFlowSafeQuda");
-
 static TimeProfile profileAdjGFlowHier("AdjgFlowHierQuda");
 
 //!< Profiler for projectSU3Quda
@@ -240,10 +239,6 @@ static TimeProfile profileContract("contractQuda");
 //!< Profiler for FT contractions
 static TimeProfile profileContractFT("contractFTQuda");
 
-//!< Profiler for GEMM and other BLAS
-static TimeProfile profileBLAS("blasQuda");
-TimeProfile &getProfileBLAS() { return profileBLAS; }
-
 //!< Profiler for covariant derivative
 static TimeProfile profileCovDev("covDevQuda");
 
@@ -253,32 +248,9 @@ static TimeProfile profileMomAction("momActionQuda");
 //!< Profiler for sink projection
 static TimeProfile profileSinkProject("sinkProjectQuda");
 
-//!< Profiler for baryon kernel
-static TimeProfile profileBaryonKernel("baryonKernelQuda");
-TimeProfile &getProfileBaryonKernel() { return profileBaryonKernel; }
-
-static TimeProfile profileBaryonKernelModeTripletsA("baryonKernelModeTripletsAQuda");
-TimeProfile &getProfileBaryonKernelModeTripletsA() { return profileBaryonKernelModeTripletsA; }
-
-//!< Profiler for baryon kernel mode triplets B
-static TimeProfile profileBaryonKernelModeTripletsB("baryonKernelModeTripletsBQuda");
-TimeProfile &getProfileBaryonKernelModeTripletsB() { return profileBaryonKernelModeTripletsB; }
-
-//!< Profiler for accumulate evecs
-static TimeProfile profileAccumulateEvecs("accumulateEvecsQuda");
-TimeProfile &getProfileAccumulateEvecs() { return profileAccumulateEvecs; }
-
-//!< Profiler for color contract
-static TimeProfile profileColorContract("colorContractQuda");
-TimeProfile &getProfileColorContract() { return profileColorContract; }
-
-//!< Profiler for color cross
-static TimeProfile profileColorCross("colorCrossQuda");
-TimeProfile &getProfileColorCross() { return profileColorCross; }
-
-//!< Profiler for current kernel
-static TimeProfile profileCurrentKernel("currentKernelQuda");
-TimeProfile &getProfileCurrentKernel() { return profileCurrentKernel; }
+//!< Profiler for GEMM and other BLAS
+static TimeProfile profileBLAS("blasQuda");
+TimeProfile &getProfileBLAS() { return profileBLAS; }
 
 //!< Profiler for endQuda
 static TimeProfile profileEnd("endQuda");
