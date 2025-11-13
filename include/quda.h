@@ -1928,10 +1928,11 @@ extern "C" {
    * @param[in] blockSizeMomProj the factor that divides n1.n2.n3 to batch the DFT
    * @param[in] X Lattice dimensions
    */
-  void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
+  void laphBaryonKernel( const int n1, const int n2, const int n3,
 			 const double _Complex *host_coeffs1,
 			 const double _Complex *host_coeffs2,
 			 const double _Complex *host_coeffs3,
+			 const int nMom,
 			 const double _Complex *host_mom,
 			 const int nEv,
 			 void **host_evec,
@@ -1953,17 +1954,16 @@ extern "C" {
    * @param[out] the returned DFTed array
    * @param[in] X Lattice dimensions
    */
-  void laphMesonKernel( const int n1,
-			const int n2,
-			const int nMom,
-			const int blockSizeMomProj,
+  void laphMesonKernel( const int n1, const int n2,
 			const double _Complex *host_coeffs1, 
 			const double _Complex *host_coeffs2,
+			const int nMom,
+			const double _Complex *host_mom,
 			const int nEv,
 			void **host_evec,
-			const double _Complex *host_mom,
 			QudaInvertParam inv_param,
 			double _Complex *return_array,
+			const int blockSizeMomProj,
 			const int X[4]) ;
 
   /**
@@ -1977,12 +1977,13 @@ extern "C" {
    * @param[out] the returned DFTd triplet
    * @param[in] X Lattice dimensions
    */  
-  void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv,
-					    const int blockSizeMomProj,
-					    void **host_evec, 
+  void laphBaryonKernelComputeModeTripletA( const int nMom,
 					    const double _Complex *host_mom,
+					    const int nEv,
+					    void **host_evec, 
 					    QudaInvertParam inv_param,
 					    double _Complex *return_array,
+					    const int blockSizeMomProj,
 					    const int X[4] );  
 
   /**
@@ -1999,10 +2000,10 @@ extern "C" {
    * @param[out] return_array the returned DFTed array
    */
   void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int n3,
-					    const int nMom, const int nEv, 
 					    const double _Complex *host_coeffs1, 
 					    const double _Complex *host_coeffs2, 
 					    const double _Complex *host_coeffs3,
+					    const int nMom, const int nEv, 
 					    const double _Complex *host_mode_trip_buf, 
 					    double _Complex *return_array);
 

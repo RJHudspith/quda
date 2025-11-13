@@ -25,18 +25,8 @@ static TimeProfile profileColorContract("colorContractQuda");
 TimeProfile &getProfileColorContract() { return profileColorContract; }
 static TimeProfile profileColorCross("colorCrossQuda");
 TimeProfile &getProfileColorCross() { return profileColorCross; } 
-
 TimeProfile &getProfileBLAS();
-/*
-TimeProfile &getProfileApplyNoise() ;
-TimeProfile &getProfileBaryonKernel();
-TimeProfile &getProfileBaryonKernelModeTripletsA();
-TimeProfile &getProfileBaryonKernelModeTripletsB();
-TimeProfile &getProfileColorContract();
-TimeProfile &getProfileColorCross();
-TimeProfile &getProfileMesonKernel();
-TimeProfile &getProfileMesonDoublet();
-*/
+
 static const double OneGB = 1024.*1024.*1024.;
 
 // copy Fourier twiddles to the device
@@ -98,10 +88,11 @@ apply_noises( const std::vector<ColorSpinorField> &evec ,
   }
 }
 
-void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
+void laphBaryonKernel( const int n1, const int n2, const int n3,
 		       const double _Complex *host_coeffs1, 
 		       const double _Complex *host_coeffs2, 
 		       const double _Complex *host_coeffs3,
+		       const int nMom,
 		       const double _Complex *host_mom, 
 		       const int nEv,
 		       void **host_evec,
@@ -246,17 +237,16 @@ void laphBaryonKernel( const int n1, const int n2, const int n3, const int nMom,
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_TOTAL);
 }
 
-void laphMesonKernel( const int n1,
-		      const int n2,
-		      const int nMom,
-		      const int blockSizeMomProj,
+void laphMesonKernel( const int n1, const int n2,
 		      const double _Complex *host_coeffs1, 
 		      const double _Complex *host_coeffs2,
+		      const int nMom,
+		      const double _Complex *host_mom,
 		      const int nEv,
 		      void **host_evec,
-		      const double _Complex *host_mom,
 		      QudaInvertParam inv_param,
 		      double _Complex *return_array,
+		      const int blockSizeMomProj,
 		      const int X[4])
 {
   getProfileMesonKernel().TPSTART(QUDA_PROFILE_TOTAL);
@@ -373,11 +363,13 @@ void laphMesonKernel( const int n1,
 }
 
 // mode tripletA
-void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const int blockSizeMomProj,
-					  void **host_evec, 
+void laphBaryonKernelComputeModeTripletA( const int nMom,
 					  const double _Complex *host_mom,
+					  const int nEv,
+					  void **host_evec,
 					  QudaInvertParam inv_param,
 					  double _Complex *return_array,
+					  const int blockSizeMomProj,
 					  const int X[4])
 {
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_TOTAL);  
@@ -497,17 +489,17 @@ void laphBaryonKernelComputeModeTripletA( const int nMom, const int nEv, const i
 }
 
 void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int n3,
-					  const int nMom, const int nEv,
 					  const double _Complex *host_coeffs1, 
 					  const double _Complex *host_coeffs2, 
 					  const double _Complex *host_coeffs3,
+					  const int nMom, const int nEv,
 					  const double _Complex *host_mode_trip_buf,
 					  double _Complex *return_array)
 {
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_TOTAL);
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT); 
   // check we are safe to cast into a Complex (= std::complex<double>)
-  if (sizeof(Complex) != sizeof(double _Complex)) {
+  if(sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
   const size_t data_coeffs1_bytes = n1*nEv*2*QUDA_DOUBLE_PRECISION;
