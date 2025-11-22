@@ -48,6 +48,7 @@ device_hostmom( const double _Complex *host_mom ,
   }
 }
 
+// return d_ret to the host handling different precisions
 static inline void
 hostreturn( const void *d_ret ,
 	    double _Complex *return_array ,
@@ -83,9 +84,35 @@ apply_noises( const std::vector<ColorSpinorField> &evec ,
       const size_t n1 = q[n].size() ;
       blas::block::caxpy( {coeffs[n].begin()+n1*i,coeffs[n].begin()+n1*(i+1)},
 			  {quda_evec[0]}, {q[n].begin(),q[n].end()} ) ;
-
     }
   }
+}
+
+// because we now have the same indexing pattern all our BLAS DFT calls are the same
+static QudaBLASParam
+default_BLAS( const int nMom , const int X[4] , const int blockSizeMomProj , const int precision )
+{
+  const int nSp = X[0]*X[1]*X[2] ;
+  const int nSites = nSp*X[3] ;
+  QudaBLASParam cublas_param = newQudaBLASParam() ;
+  cublas_param.trans_a = QUDA_BLAS_OP_N;
+  cublas_param.trans_b = QUDA_BLAS_OP_T;
+  cublas_param.m = nMom ;
+  cublas_param.n = X[3] ;
+  cublas_param.k = nSp ;
+  cublas_param.lda = nSp ;
+  cublas_param.ldb = nSp ;
+  cublas_param.ldc = X[3] ;
+  cublas_param.a_stride = 0 ;
+  cublas_param.b_stride = nSites ;
+  cublas_param.c_stride = X[3]*nMom ;
+  cublas_param.batch_count = blockSizeMomProj;
+  cublas_param.alpha = 1. ; cublas_param.beta = 0. ;
+  cublas_param.data_order = QUDA_BLAS_DATAORDER_ROW;
+  cublas_param.data_type = ( precision == QUDA_SINGLE_PRECISION ) ? \
+    QUDA_BLAS_DATATYPE_C : QUDA_BLAS_DATATYPE_Z;
+  cublas_param.blas_type = QUDA_BLAS_GEMM ;
+  return cublas_param ;
 }
 
 void laphBaryonKernel( const int n1, const int n2, const int n3,
@@ -151,17 +178,15 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
     for( int j = 0 ; j < nEv ; j++ ) { coeffs[2][j*n3+i] = (std::complex<double>)host_coeffs3[j+i*nEv] ; }
   }
   // device temporaries, momentum, and return buffers. All pretty small
-  const size_t data_tmp_bytes = (size_t)blockSizeMomProj*(size_t)nSites*2*precision ;
-  const size_t data_ret_bytes = (size_t)(X[3]*nMom)*(size_t)(n1*n2*n3)*2*precision ;
-  const size_t data_mom_bytes = (size_t)(nMom*nSp)*2*precision ;
+  const size_t data_tmp_bytes = blockSizeMomProj*nSites*2*precision ;
+  const size_t data_ret_bytes = blockSizeMomProj*nMom*X[3]*2*precision ;
+  const size_t data_mom_bytes = nMom*nSp*2*precision ;
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
   if( getVerbosity() >= QUDA_SUMMARIZE ) {
     printfQuda( "Tmp %f | ret %f | mom %f [GB]\n" ,
-		data_tmp_bytes/OneGB ,
-		data_ret_bytes/OneGB ,
-		data_mom_bytes/OneGB ) ;
+		data_tmp_bytes/OneGB , data_ret_bytes/OneGB , data_mom_bytes/OneGB ) ;
   }
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_INIT);  
   // Copy host_mom data to device
@@ -173,24 +198,8 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
   apply_noises( evec , cuda_evec_param , quda_q , coeffs ) ;
   getProfileApplyNoise().TPSTOP(QUDA_PROFILE_COMPUTE);
   // usual momentum contraction, strided and blocked
-  QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
-  cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
-  cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
-  cublas_param_mom_sum.m = nMom;
-  cublas_param_mom_sum.n = X[3];
-  cublas_param_mom_sum.k = nSp;
-  cublas_param_mom_sum.lda = nSp;
-  cublas_param_mom_sum.ldb = nSp;
-  cublas_param_mom_sum.ldc = X[3]*n1*n2*n3;
-  cublas_param_mom_sum.a_stride = 0 ;
-  cublas_param_mom_sum.b_stride = nSites ;
-  cublas_param_mom_sum.c_stride = X[3] ;
-  cublas_param_mom_sum.batch_count = blockSizeMomProj;
-  cublas_param_mom_sum.alpha = 1.0 ; cublas_param_mom_sum.beta = 0.0 ;
-  cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
-  cublas_param_mom_sum.data_type = (precision == QUDA_SINGLE_PRECISION) ? \
-    QUDA_BLAS_DATATYPE_C : QUDA_BLAS_DATATYPE_Z;
-  cublas_param_mom_sum.blas_type = QUDA_BLAS_GEMM ;
+  QudaBLASParam cublas_param_mom_sum =				\
+    default_BLAS( nMom , X , blockSizeMomProj , precision ) ;
   // Create device diquark vector
   ColorSpinorParam cuda_diq_param( cuda_evec_param , inv_param , QUDA_CUDA_FIELD_LOCATION ) ;
   ColorSpinorField quda_diq( cuda_diq_param ) ;
@@ -207,10 +216,14 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
 	nInBlock++;
 	if (nInBlock == blockSizeMomProj ) {
 	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
-	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (char*)d_ret + X[3]*blockStart*2*precision,
+	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (char*)d_ret,
 						cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
-	  blockStart += nInBlock ;
 	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+	  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_D2H);
+	  hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
+		      (size_t)nInBlock*X[3]*nMom , precision ) ;
+	  getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_D2H);
+	  blockStart += nInBlock ;
 	  nInBlock = 0;
 	}
       }
@@ -220,14 +233,14 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
   if( nInBlock > 0 ) {
     getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
     cublas_param_mom_sum.batch_count = nInBlock;
-    blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (char*)d_ret + X[3]*blockStart*2*precision,
+    blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (char*)d_ret,
 					  cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
     getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+    getProfileBaryonKernel().TPSTART(QUDA_PROFILE_D2H);
+    hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
+		(size_t)nInBlock*X[3]*nMom , precision ) ;
+    getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_D2H);
   }
-  // Copy return array back to host
-  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_D2H);
-  hostreturn( d_ret , return_array , (size_t)(X[3]*nMom)*(size_t)(n1*n2*n3) , precision ) ;
-  getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_D2H);
   // Clean up memory allocations
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_FREE);
   pool_device_free(d_tmp);
@@ -299,23 +312,8 @@ void laphMesonKernel( const int n1, const int n2,
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
   // momentum contractions are a batched strided BLAS
-  QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
-  cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
-  cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
-  cublas_param_mom_sum.m = nMom ;
-  cublas_param_mom_sum.n = X[3] ;
-  cublas_param_mom_sum.k   = nSp ;
-  cublas_param_mom_sum.lda = nSp ;
-  cublas_param_mom_sum.ldb = nSp ;
-  cublas_param_mom_sum.ldc = X[3] ;
-  cublas_param_mom_sum.a_stride = 0 ; // mom stays the same
-  cublas_param_mom_sum.b_stride = nSp*X[3] ;
-  cublas_param_mom_sum.c_stride = X[3]*nMom ;
-  cublas_param_mom_sum.batch_count = blockSizeMomProj ;
-  cublas_param_mom_sum.alpha = 1.0; cublas_param_mom_sum.beta = 0.0;
-  cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
-  cublas_param_mom_sum.data_type = (inv_param.cuda_prec == QUDA_SINGLE_PRECISION) ? \
-    QUDA_BLAS_DATATYPE_C : QUDA_BLAS_DATATYPE_Z ;
+  QudaBLASParam cublas_param_mom_sum =				\
+    default_BLAS( nMom , X , blockSizeMomProj , precision ) ;
   getProfileMesonKernel().TPSTOP(QUDA_PROFILE_INIT);
   // copy the hostmom to the device
   getProfileMesonKernel().TPSTART(QUDA_PROFILE_H2D);
@@ -406,9 +404,9 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
     quda_evec[i] = ColorSpinorField(cuda_evec_param) ;
     quda_evec[i] = evec[i] ; // CPU -> GPU
   }
-  // Device side temp array (complBuf in chroma_laph)
+  // Device side temp array
   const size_t data_tmp_bytes = blockSizeMomProj*nSites*2*precision ;
-  const size_t data_ret_bytes = (size_t)nEvChoose3*nMom*X[3]*2*precision ;
+  const size_t data_ret_bytes = blockSizeMomProj*nMom*X[3]*2*precision ;
   const size_t data_mom_bytes = (size_t)(nMom*nSp)*2*precision ;
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_ret = pool_device_malloc(data_ret_bytes);
@@ -425,24 +423,9 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_H2D);
   device_hostmom( host_mom , d_mom , nMom*nSp , precision ) ;
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_H2D);
-  // idea here like always is to do several ev-blocks at once in a zgemm
-  QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
-  cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
-  cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
-  cublas_param_mom_sum.m = nMom ;
-  cublas_param_mom_sum.k = nSp ;
-  cublas_param_mom_sum.n = X[3] ;
-  cublas_param_mom_sum.lda = nSp ;
-  cublas_param_mom_sum.ldb = nSp ;
-  cublas_param_mom_sum.ldc = X[3]*nEvChoose3;
-  cublas_param_mom_sum.a_stride = 0 ;
-  cublas_param_mom_sum.b_stride = nSites ;
-  cublas_param_mom_sum.c_stride = X[3] ;
-  cublas_param_mom_sum.batch_count = blockSizeMomProj;
-  cublas_param_mom_sum.alpha = 1. ; cublas_param_mom_sum.beta = 0. ;
-  cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
-  cublas_param_mom_sum.data_type = ( precision == QUDA_SINGLE_PRECISION ) ? \
-    QUDA_BLAS_DATATYPE_C : QUDA_BLAS_DATATYPE_Z;
+  // momentum contractions are a batched strided BLAS
+  QudaBLASParam cublas_param_mom_sum =				\
+    default_BLAS( nMom , X , blockSizeMomProj , precision ) ;
   // Create device diquark vector
   ColorSpinorParam cuda_diq_param(cpu_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
   ColorSpinorField quda_diq(cuda_diq_param) ;
@@ -459,9 +442,13 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
 	nInBlock++;
 	if (nInBlock == blockSizeMomProj) {
 	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
-	  blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret+X[3]*blockStart*2*precision,
+	  blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret,
 						 cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION );
 	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+	  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_D2H);
+	  hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
+		      (size_t)nInBlock*X[3]*nMom , precision ) ;
+	  getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_D2H);
 	  blockStart += nInBlock;
 	  nInBlock = 0;
 	}
@@ -471,14 +458,14 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
   if( nInBlock > 0 ) {
     cublas_param_mom_sum.batch_count = nInBlock;
     getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
-    blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret+X[3]*blockStart*2*precision,
+    blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret,
 					   cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION );
     getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);    
+    getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_D2H);
+    hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
+		(size_t)nInBlock*X[3]*nMom , precision ) ;
+    getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_D2H);
   }
-  // Copy return array back to host
-  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_D2H);
-  hostreturn( d_ret , return_array , (size_t)nEvChoose3*nMom*X[3] , precision ) ;
-  getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_D2H);
   // Clean up memory allocations
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_FREE);
   pool_device_free(d_tmp);
@@ -658,23 +645,8 @@ void laphMesonKernelComputeModeDoublet( const int nMom,
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
   // momentum contractions are a batched strided BLAS
-  QudaBLASParam cublas_param_mom_sum = newQudaBLASParam();
-  cublas_param_mom_sum.trans_a = QUDA_BLAS_OP_N;
-  cublas_param_mom_sum.trans_b = QUDA_BLAS_OP_T;
-  cublas_param_mom_sum.m = nMom ;
-  cublas_param_mom_sum.n = X[3] ;
-  cublas_param_mom_sum.k   = nSp ;
-  cublas_param_mom_sum.lda = nSp ;
-  cublas_param_mom_sum.ldb = nSp ;
-  cublas_param_mom_sum.ldc = X[3] ;
-  cublas_param_mom_sum.a_stride = 0 ; // mom stays the same
-  cublas_param_mom_sum.b_stride = nSp*X[3] ;
-  cublas_param_mom_sum.c_stride = X[3]*nMom ;
-  cublas_param_mom_sum.batch_count = blockSizeMomProj ;
-  cublas_param_mom_sum.alpha = 1.0; cublas_param_mom_sum.beta = 0.0;
-  cublas_param_mom_sum.data_order = QUDA_BLAS_DATAORDER_ROW;
-  cublas_param_mom_sum.data_type = (inv_param.cuda_prec == QUDA_SINGLE_PRECISION) ? \
-    QUDA_BLAS_DATATYPE_C : QUDA_BLAS_DATATYPE_Z ;
+  QudaBLASParam cublas_param_mom_sum =				\
+    default_BLAS( nMom , X , blockSizeMomProj , precision ) ;
   getProfileMesonDoublet().TPSTOP(QUDA_PROFILE_INIT);
   // Copy host data to device for all evecs
   getProfileMesonDoublet().TPSTART(QUDA_PROFILE_H2D);
