@@ -29,6 +29,9 @@ TimeProfile &getProfileBLAS();
 
 static const double OneGB = 1024.*1024.*1024.;
 
+// blocking factors for color contractions and color cross
+static const int nRHS = 16 , nDiq = 8 ;
+
 // copy Fourier twiddles to the device
 static inline void
 device_hostmom( const double _Complex *host_mom ,
@@ -115,6 +118,19 @@ default_BLAS( const int nMom , const int X[4] , const int blockSizeMomProj , con
   return cublas_param ;
 }
 
+static void
+view_allocs( const size_t data_ret_bytes ,
+	     const size_t data_tmp_bytes ,
+	     const size_t data_mom_bytes )
+{
+  if( getVerbosity() >= QUDA_SUMMARIZE ) {
+    const size_t total_bytes = data_tmp_bytes + data_ret_bytes + data_mom_bytes ;
+    printfQuda("d_ret %fGB | d_tmp %fGB | d_mom %fGB | total = %fGB\n",
+	       (double)data_ret_bytes/(OneGB), (double)data_tmp_bytes/(OneGB),
+	       (double)data_mom_bytes/(OneGB), (double)total_bytes/(OneGB)); 
+  }
+}
+
 void laphBaryonKernel( const int n1, const int n2, const int n3,
 		       const double _Complex *host_coeffs1, 
 		       const double _Complex *host_coeffs2, 
@@ -129,7 +145,7 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
 		       const int X[4] )
 {
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_TOTAL);
-  // appropriate checks and balances
+  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_INIT);
   if( sizeof(Complex) != sizeof(double _Complex) ) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
@@ -143,7 +159,6 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
   const size_t nSp    = X[0]*X[1]*X[2] ;
   const size_t nSites = nSp*X[3] ;
   const int precision = inv_param.cuda_prec ;
-  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_INIT);
   const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
   ColorSpinorParam cpu_evec_param( host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION );
   cpu_evec_param.nSpin = 1;
@@ -178,17 +193,14 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
     for( int j = 0 ; j < nEv ; j++ ) { coeffs[2][j*n3+i] = (std::complex<double>)host_coeffs3[j+i*nEv] ; }
   }
   // device temporaries, momentum, and return buffers. All pretty small
-  const size_t data_tmp_bytes = blockSizeMomProj*nSites*2*precision ;
   const size_t data_ret_bytes = blockSizeMomProj*nMom*X[3]*2*precision ;
+  const size_t data_tmp_bytes = blockSizeMomProj*nSites*2*precision ;
   const size_t data_mom_bytes = nMom*nSp*2*precision ;
-  void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_ret = pool_device_malloc(data_ret_bytes);
+  void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
-  if( getVerbosity() >= QUDA_SUMMARIZE ) {
-    printfQuda( "Tmp %f | ret %f | mom %f [GB]\n" ,
-		data_tmp_bytes/OneGB , data_ret_bytes/OneGB , data_mom_bytes/OneGB ) ;
-  }
-  getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_INIT);  
+  view_allocs( data_ret_bytes , data_tmp_bytes , data_mom_bytes ) ;
+  getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_INIT);
   // Copy host_mom data to device
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_H2D);
   device_hostmom( host_mom , d_mom , nMom*nSp , precision ) ;
@@ -202,31 +214,43 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
     default_BLAS( nMom , X , blockSizeMomProj , precision ) ;
   // Create device diquark vector
   ColorSpinorParam cuda_diq_param( cuda_evec_param , inv_param , QUDA_CUDA_FIELD_LOCATION ) ;
-  ColorSpinorField quda_diq( cuda_diq_param ) ;
+  std::vector<ColorSpinorField> quda_diq( nDiq ) ;
+  for( size_t i = 0 ; i < quda_diq.size() ; i++ ) {
+    quda_diq[i] = ColorSpinorField( cuda_diq_param ) ;
+  }
   int nInBlock = 0 , blockStart = 0 ;
   for( int dil1=0; dil1<n1; dil1++ ) {
-    for( int dil2=0; dil2<n2; dil2++ ) {
+    int dil2 = 0 ;
+    while( dil2 < n2 ) {
+      const int diqblk = std::min( nDiq , n2-dil2 ) ;
       getProfileColorCross().TPSTART(QUDA_PROFILE_COMPUTE);
-      colorCrossQuda(quda_q[0][dil1], quda_q[1][dil2], quda_diq);
+      colorCrossQudaV( quda_q[0][dil1], { quda_q[1].begin() + dil2 , quda_q[1].begin() + dil2 + diqblk } ,
+		       { quda_diq.begin() , quda_diq.begin()+diqblk } );
       getProfileColorCross().TPSTOP(QUDA_PROFILE_COMPUTE);
-      for (int dil3=0; dil3<n3; dil3++) {
-	getProfileColorContract().TPSTART(QUDA_PROFILE_COMPUTE);	
-	colorContractQuda(quda_diq, quda_q[2][dil3], (char*)d_tmp + nSites*nInBlock*2*precision);
-	getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
-	nInBlock++;
-	if (nInBlock == blockSizeMomProj ) {
-	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
-	  blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (char*)d_ret,
-						cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
-	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
-	  getProfileBaryonKernel().TPSTART(QUDA_PROFILE_D2H);
-	  hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
-		      (size_t)nInBlock*X[3]*nMom , precision ) ;
-	  getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_D2H);
-	  blockStart += nInBlock ;
-	  nInBlock = 0;
+      for( int b = 0 ; b < diqblk ; b++ ) {
+	int dil3 = 0 ;
+	while( dil3 < n3 ) {
+	  const int blk = std::min( std::min( n3 - dil3 , nRHS ) , (blockSizeMomProj-nInBlock ) ) ;
+	  getProfileColorContract().TPSTART(QUDA_PROFILE_COMPUTE);
+	  colorContractQudaV( quda_diq[b], { quda_q[2].begin() + dil3 , quda_q[2].begin() + dil3 + blk } ,
+			      (char*)d_tmp + nSites*nInBlock*2*precision);
+	  getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
+	  nInBlock+=blk ; dil3 += blk ;
+	  if (nInBlock == blockSizeMomProj ) {
+	    getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
+	    blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (char*)d_ret,
+						  cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
+	    getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+	    getProfileBaryonKernel().TPSTART(QUDA_PROFILE_D2H);
+	    hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
+			(size_t)nInBlock*X[3]*nMom , precision ) ;
+	    getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_D2H);
+	    blockStart += nInBlock ;
+	    nInBlock = 0;
+	  }
 	}
       }
+      dil2 += diqblk ;
     }
   }
   // overspill is less efficient than exact division but more flexible
@@ -243,9 +267,9 @@ void laphBaryonKernel( const int n1, const int n2, const int n3,
   }
   // Clean up memory allocations
   getProfileBaryonKernel().TPSTART(QUDA_PROFILE_FREE);
+  pool_device_free(d_ret);
   pool_device_free(d_tmp);
   pool_device_free(d_mom);
-  pool_device_free(d_ret);
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_FREE);
   getProfileBaryonKernel().TPSTOP(QUDA_PROFILE_TOTAL);
 }
@@ -263,8 +287,7 @@ void laphMesonKernel( const int n1, const int n2,
 		      const int X[4])
 {
   getProfileMesonKernel().TPSTART(QUDA_PROFILE_TOTAL);
-  getProfileMesonKernel().TPSTART(QUDA_PROFILE_INIT);  
-  // Check we are safe to cast into a Complex (= std::complex<double>)
+  getProfileMesonKernel().TPSTART(QUDA_PROFILE_INIT);
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
@@ -276,10 +299,9 @@ void laphMesonKernel( const int n1, const int n2,
     errorQuda("Unsupported device precision") ;
   }
   const QudaPrecision precision = inv_param.cuda_prec ;
-  // Some common variables
-  const size_t nSp = X[0]*X[1]*X[2];
+  const size_t nSp    = X[0]*X[1]*X[2];
   const size_t nSites = nSp*X[3];
-  const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
+  const lat_dim_t x   = { X[0] , X[1] , X[2] , X[3] } ;
   ColorSpinorParam cpu_evec_param(host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
   cpu_evec_param.nSpin = 1;
   std::vector<ColorSpinorField> evec(nEv) ;
@@ -306,11 +328,12 @@ void laphMesonKernel( const int n1, const int n2,
   }
   // Device array to hold the entire return array
   const size_t data_ret_bytes = nMom*X[3]*n1*n2*2*precision;
-  const size_t data_tmp_bytes = nSites*blockSizeMomProj*2*precision;
+  const size_t data_tmp_bytes = std::max(nRHS,blockSizeMomProj)*nSites*2*precision;
   const size_t data_mom_bytes = nMom*nSp*2*precision;
   void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
+  view_allocs( data_ret_bytes , data_tmp_bytes , data_mom_bytes ) ;
   // momentum contractions are a batched strided BLAS
   QudaBLASParam cublas_param_mom_sum =				\
     default_BLAS( nMom , X , blockSizeMomProj , precision ) ;
@@ -322,21 +345,24 @@ void laphMesonKernel( const int n1, const int n2,
   // apply the noises
   getProfileApplyNoise().TPSTART(QUDA_PROFILE_COMPUTE);
   apply_noises( evec , cuda_evec_param , quda_q , coeffs ) ;
-  getProfileApplyNoise().TPSTART(QUDA_PROFILE_COMPUTE);
+  getProfileApplyNoise().TPSTOP(QUDA_PROFILE_COMPUTE);
   int nInBlock = 0 , blockStart = 0 ;
   for (int dil1=0; dil1<n1; dil1++) {
-    for (int dil2=0; dil2<n2; dil2++){
+    int dil2 = 0 ;
+    while( dil2 < n2 ) {
+      const int blk = std::min( std::min( n2 - dil2 , nRHS ) , blockSizeMomProj-nInBlock ) ;
       getProfileMesonKernel().TPSTART(QUDA_PROFILE_COMPUTE);
-      innerProductQuda( quda_q[0][dil1], quda_q[1][dil2], (char*)d_tmp+nSites*nInBlock*2*precision );
+      innerProductQudaV( quda_q[0][dil1], { quda_q[1].begin() + dil2 , quda_q[1].begin() + dil2 + blk },
+			 (char*)d_tmp+nSites*nInBlock*2*precision );
       getProfileMesonKernel().TPSTOP(QUDA_PROFILE_COMPUTE);
-      nInBlock++ ;
+      nInBlock+=blk ; dil2 += blk ;
       if( nInBlock == blockSizeMomProj ) {
 	getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
 	blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret+blockStart*X[3]*nMom*2*precision,
 					       cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
-	blockStart += nInBlock ;
-	nInBlock = 0 ;
 	getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+	blockStart += blockSizeMomProj ;
+	nInBlock = 0 ;
       }
     }
   }
@@ -370,9 +396,8 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
 					  const int blockSizeMomProj,
 					  const int X[4])
 {
-  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_TOTAL);  
-  const size_t nSp    = X[0]*X[1]*X[2];
-  const size_t nSites = nSp*X[3] ;
+  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_TOTAL);
+  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_INIT);
   const size_t nEvChoose3 = nEv*(nEv-1)/2*(nEv-2)/3;
   // appropriate checks and balances
   if (sizeof(Complex) != sizeof(double _Complex)) {
@@ -385,9 +410,9 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
       inv_param.cuda_prec != QUDA_DOUBLE_PRECISION ) {
     errorQuda( "Unsupported device precision %d" , inv_param.cuda_prec ) ;
   }
-  const int precision = inv_param.cuda_prec ;
-  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_INIT);
-  // Parameter object describing evecs
+  const size_t nSp        = X[0]*X[1]*X[2];
+  const size_t nSites     = nSp*X[3] ;
+  const int precision     = inv_param.cuda_prec ;
   const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
   ColorSpinorParam cpu_evec_param(host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
   cpu_evec_param.nSpin = 1;
@@ -396,31 +421,23 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
     cpu_evec_param.v = host_evec[iEv];
     evec[iEv] = ColorSpinorField(cpu_evec_param);
   }
-  // chuck all the evecs on the GPU, this should probably be tiled - TODO
   ColorSpinorParam cuda_evec_param(cpu_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
   cuda_evec_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);
+  // Device side temp array
+  const size_t data_ret_bytes = blockSizeMomProj*nMom*X[3]*2*precision ;
+  const size_t data_tmp_bytes = std::max(blockSizeMomProj,nRHS)*nSites*2*precision ;
+  const size_t data_mom_bytes = (size_t)(nMom*nSp)*2*precision ;
+  void *d_ret = pool_device_malloc(data_ret_bytes);
+  void *d_tmp = pool_device_malloc(data_tmp_bytes);
+  void *d_mom = pool_device_malloc(data_mom_bytes);
+  view_allocs( data_ret_bytes , data_tmp_bytes , data_mom_bytes ) ;
+  getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_INIT);
+  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_H2D);
   std::vector<ColorSpinorField> quda_evec(nEv);
   for (int i=0; i<nEv; i++) {
     quda_evec[i] = ColorSpinorField(cuda_evec_param) ;
     quda_evec[i] = evec[i] ; // CPU -> GPU
   }
-  // Device side temp array
-  const size_t data_tmp_bytes = blockSizeMomProj*nSites*2*precision ;
-  const size_t data_ret_bytes = blockSizeMomProj*nMom*X[3]*2*precision ;
-  const size_t data_mom_bytes = (size_t)(nMom*nSp)*2*precision ;
-  void *d_tmp = pool_device_malloc(data_tmp_bytes);
-  void *d_ret = pool_device_malloc(data_ret_bytes);
-  void *d_mom = pool_device_malloc(data_mom_bytes);
-  if( getVerbosity() >= QUDA_SUMMARIZE ) {
-    const size_t OneGB = 1024*1024*1024;
-    const size_t total_bytes = data_tmp_bytes + data_ret_bytes + data_mom_bytes ;
-    printfQuda("d_tmp %fGB | d_ret %fGB | d_mom %fGB | total = %fGB\n",
-	       (double)data_tmp_bytes/(OneGB), (double)data_ret_bytes/(OneGB),
-	       (double)data_mom_bytes/(OneGB), (double)total_bytes/(OneGB)); 
-  }
-  getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_INIT);
-  // Copy host data to device
-  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_H2D);
   device_hostmom( host_mom , d_mom , nMom*nSp , precision ) ;
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_H2D);
   // momentum contractions are a batched strided BLAS
@@ -428,36 +445,50 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
     default_BLAS( nMom , X , blockSizeMomProj , precision ) ;
   // Create device diquark vector
   ColorSpinorParam cuda_diq_param(cpu_evec_param,inv_param,QUDA_CUDA_FIELD_LOCATION);
-  ColorSpinorField quda_diq(cuda_diq_param) ;
+  std::vector<ColorSpinorField> quda_diq(nDiq) ;
+  for( size_t i = 0 ; i < quda_diq.size() ; i++ ) {
+    quda_diq[i] = ColorSpinorField( cuda_diq_param ) ;
+  }
   int nInBlock = 0, blockStart = 0;
   for (int aEv=0; aEv<nEv; aEv++) {
-    for (int bEv=aEv+1; bEv<nEv; bEv++) {
+    int bEv = aEv+1 ;
+    while( bEv < nEv ) {
+      const int diqBlk = std::min( nEv - bEv , nDiq ) ;
       getProfileColorCross().TPSTART(QUDA_PROFILE_COMPUTE);
-      colorCrossQuda(quda_evec[aEv], quda_evec[bEv], quda_diq);
+      colorCrossQudaV( quda_evec[aEv],
+		       { quda_evec.begin() + bEv , quda_evec.begin() + bEv + diqBlk } ,
+		       { quda_diq.begin() , quda_diq.begin()+diqBlk } ) ;
       getProfileColorCross().TPSTOP(QUDA_PROFILE_COMPUTE);
-      for (int cEv=bEv+1; cEv<nEv; cEv++) {
-	getProfileColorContract().TPSTART(QUDA_PROFILE_COMPUTE);
-	colorContractQuda(quda_diq, quda_evec[cEv],(char*)d_tmp + nSites*nInBlock*2*precision);
-	getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
-	nInBlock++;
-	if (nInBlock == blockSizeMomProj) {
-	  getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
-	  blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret,
-						 cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION );
-	  getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
-	  getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_D2H);
-	  hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
-		      (size_t)nInBlock*X[3]*nMom , precision ) ;
-	  getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_D2H);
-	  blockStart += nInBlock;
-	  nInBlock = 0;
+      for( int b = 0 ; b < diqBlk ; b++ ) {
+	int cEv = bEv+1+b ;
+	while( cEv < nEv ) {
+	  const int blk = std::min( std::min( nEv - cEv , nRHS ) , (blockSizeMomProj-nInBlock ) ) ;
+	  getProfileColorContract().TPSTART(QUDA_PROFILE_COMPUTE);
+	  colorContractQudaV( quda_diq[b], { quda_evec.begin() + cEv , quda_evec.begin() + cEv + blk } ,
+			      (char*)d_tmp + nSites*nInBlock*2*precision);
+	  getProfileColorContract().TPSTOP(QUDA_PROFILE_COMPUTE);
+	  nInBlock+=blk ; cEv += blk ;
+	  if (nInBlock == blockSizeMomProj) {
+	    getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
+	    blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, (char*)d_ret,
+						  cublas_param_mom_sum,
+						  QUDA_CUDA_FIELD_LOCATION);
+	    getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
+	    getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_D2H);
+	    hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
+			(size_t)nInBlock*X[3]*nMom , precision ) ;
+	    getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_D2H);
+	    blockStart += blockSizeMomProj ;
+	    nInBlock = 0;
+	  }
 	}
-      }
+      }// diqBlk
+      bEv += diqBlk ;
     }
   }
   if( nInBlock > 0 ) {
     cublas_param_mom_sum.batch_count = nInBlock;
-    getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
+    getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
     blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret,
 					   cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION );
     getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);    
@@ -466,11 +497,10 @@ void laphBaryonKernelComputeModeTripletA( const int nMom,
 		(size_t)nInBlock*X[3]*nMom , precision ) ;
     getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_D2H);
   }
-  // Clean up memory allocations
   getProfileBaryonKernelModeTripletsA().TPSTART(QUDA_PROFILE_FREE);
+  pool_device_free(d_ret);
   pool_device_free(d_tmp);
   pool_device_free(d_mom);
-  pool_device_free(d_ret);
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_FREE);
   getProfileBaryonKernelModeTripletsA().TPSTOP(QUDA_PROFILE_TOTAL);
 }
@@ -485,7 +515,6 @@ void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int 
 {
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_TOTAL);
   getProfileBaryonKernelModeTripletsB().TPSTART(QUDA_PROFILE_INIT); 
-  // check we are safe to cast into a Complex (= std::complex<double>)
   if(sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
@@ -610,8 +639,7 @@ void laphMesonKernelComputeModeDoublet( const int nMom,
 					const int X[4])
 {
   getProfileMesonDoublet().TPSTART(QUDA_PROFILE_TOTAL);
-  getProfileMesonDoublet().TPSTART(QUDA_PROFILE_INIT);  
-  // Check we are safe to cast into a Complex (= std::complex<double>)
+  getProfileMesonDoublet().TPSTART(QUDA_PROFILE_INIT);
   if (sizeof(Complex) != sizeof(double _Complex)) {
     errorQuda("Irreconcilable difference between interface and internal complex number conventions");
   }
@@ -624,9 +652,9 @@ void laphMesonKernelComputeModeDoublet( const int nMom,
   }
   const QudaPrecision precision = inv_param.cuda_prec ;
   // Some common variables
-  const size_t nSp = X[0]*X[1]*X[2];
+  const size_t nSp    = X[0]*X[1]*X[2];
   const size_t nSites = nSp*X[3];
-  const lat_dim_t x = { X[0] , X[1] , X[2] , X[3] } ;
+  const lat_dim_t x   = { X[0] , X[1] , X[2] , X[3] } ;
   // Create device vectors for quarks
   ColorSpinorParam cpu_quark_param(host_evec, inv_param, x, false, QUDA_CPU_FIELD_LOCATION);
   cpu_quark_param.nSpin = 1;
@@ -639,11 +667,12 @@ void laphMesonKernelComputeModeDoublet( const int nMom,
   cuda_quark_param.setPrecision(inv_param.cuda_prec, inv_param.cuda_prec, true);
   // Device array to hold the entire return array
   const size_t data_ret_bytes = nMom*X[3]*nEv*nEv*2*precision;
-  const size_t data_tmp_bytes = nSites*blockSizeMomProj*2*precision;
+  const size_t data_tmp_bytes = std::max(blockSizeMomProj,nRHS)*nSites*2*precision;
   const size_t data_mom_bytes = nMom*nSp*2*precision;
   void *d_ret = pool_device_malloc(data_ret_bytes);
   void *d_tmp = pool_device_malloc(data_tmp_bytes);
   void *d_mom = pool_device_malloc(data_mom_bytes);
+  view_allocs( data_ret_bytes , data_tmp_bytes , data_mom_bytes ) ;  
   // momentum contractions are a batched strided BLAS
   QudaBLASParam cublas_param_mom_sum =				\
     default_BLAS( nMom , X , blockSizeMomProj , precision ) ;
@@ -659,25 +688,31 @@ void laphMesonKernelComputeModeDoublet( const int nMom,
   getProfileMesonDoublet().TPSTOP(QUDA_PROFILE_H2D);
   int nInBlock = 0 , blockStart = 0 ;
   for (int dil1=0; dil1<nEv; dil1++) {
-    for (int dil2=0; dil2<nEv; dil2++){
+    int dil2 = 0 ;
+    while( dil2 < nEv ) {
+      const int blk = std::min( std::min( nEv-dil2 , nRHS ) , blockSizeMomProj-nInBlock ) ;
       getProfileMesonDoublet().TPSTART(QUDA_PROFILE_COMPUTE);
-      innerProductQuda( quda_quark[dil1], quda_quark[dil2], (char*)d_tmp+nSites*nInBlock*2*precision );
+      innerProductQudaV( quda_quark[dil1],
+			 { quda_quark.begin() + dil2, quda_quark.begin() + dil2 + blk } ,
+			 (char*)d_tmp+nSites*nInBlock*2*precision );
       getProfileMesonDoublet().TPSTOP(QUDA_PROFILE_COMPUTE);
-      nInBlock++ ;
+      nInBlock += blk ; dil2 += blk ;
       if( nInBlock == blockSizeMomProj ) {
 	getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
 	blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret+blockStart*X[3]*nMom*2*precision,
 					       cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
+	getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
 	blockStart += nInBlock ;
 	nInBlock = 0 ;
-	getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
       }
     }
   }
   if( nInBlock > 0 ) {
     cublas_param_mom_sum.batch_count = nInBlock ;
+    getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);
     blas_lapack::native::stridedBatchGEMM( d_mom, d_tmp, (char*)d_ret+blockStart*X[3]*nMom*2*precision,
 					   cublas_param_mom_sum, QUDA_CUDA_FIELD_LOCATION);
+    getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
   }
   // Copy device data back to host
   getProfileMesonDoublet().TPSTART(QUDA_PROFILE_D2H);

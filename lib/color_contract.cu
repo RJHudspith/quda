@@ -7,17 +7,16 @@
 #include <instantiate.h>
 
 namespace quda {
-  // Inner Product
-  template <typename Float, int nColor> class InnerProduct : TunableKernel2D
+
+  template <typename Float, int nColor> class InnerProductV : TunableKernel2D
   {
   protected:
     const ColorSpinorField &x;
-    const ColorSpinorField &y;
+    cvector_ref<const ColorSpinorField> &y;
     complex<Float> *result;
-    unsigned int minThreads() const { return x.VolumeCB(); }
-    
+    unsigned int minThreads() const { return x.VolumeCB(); }    
   public:
-    InnerProduct(const ColorSpinorField &x, const ColorSpinorField &y, void *result) :
+    InnerProductV(const ColorSpinorField &x, cvector_ref<const ColorSpinorField> &y, void *result) :
       TunableKernel2D(x, 2),
       x(x),
       y(y),
@@ -29,41 +28,36 @@ namespace quda {
     void apply(const qudaStream_t &stream)
     {
       TuneParam tp = tuneLaunch(*this, getTuning(), getVerbosity());
-      ColorContractArg<Float, nColor> arg(x, y, result);
-      launch<InnerProd>(tp, stream, arg);
+      ColorContractVArg<Float, nColor> arg(x, y, result);
+      launch<InnerProdV>(tp, stream, arg);
     }
     
     long long flops() const
     {
       // 1 prop spins, 1 evec spin, 3 color, 6 complex, lattice volume
-      return 1 * 3 * 6ll * x.Volume();
+      return 16 * 3 * 6ll * x.Volume();
     }
 
     long long bytes() const
     {
-      return x.Bytes() + y.Bytes() + x.Nspin() * x.Nspin() * x.Volume() * sizeof(Complex);
+      return x.Bytes() + 16*y[0].Bytes() + 16 * x.Volume() * sizeof(Complex);
     }
   };
 
-  void innerProductQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result)
+  void innerProductQudaV(const ColorSpinorField &x, cvector_ref<const ColorSpinorField> &y, void *result)
   {
-    checkPrecision(x, y);
-    if (x.Nspin() != 1 || y.Nspin() != 1) errorQuda("Unexpected number of spins x=%d y=%d", x.Nspin(), y.Nspin()); 
-    instantiate<InnerProduct>(x, y, result);
+    instantiate<InnerProductV>(x, y, result);
   }
 
-  //----------------------------------------------------------------------------
-  template <typename Float, int nColor> class ColorContract : TunableKernel2D
+  template <typename Float, int nColor> class ColorContractV : TunableKernel2D
   {
   protected:
-    const ColorSpinorField &x;
-    const ColorSpinorField &y;
+    const ColorSpinorField &x ;
+    cvector_ref<const ColorSpinorField> &y;
     complex<Float> *result;
-
     unsigned int minThreads() const { return x.VolumeCB(); }
-    
   public:
-    ColorContract(const ColorSpinorField &x, const ColorSpinorField &y, void *result) :
+    ColorContractV( const ColorSpinorField &x, cvector_ref< const ColorSpinorField> &y, void *result ) :
       TunableKernel2D(x, 2),
       x(x),
       y(y),
@@ -75,46 +69,41 @@ namespace quda {
     void apply(const qudaStream_t &stream)
     {
       TuneParam tp = tuneLaunch(*this, getTuning(), getVerbosity());
-      ColorContractArg<Float, nColor> arg(x, y, result);
-      launch<ColorContraction>(tp, stream, arg);
+      ColorContractVArg<Float, nColor> arg(x, y, result);
+      launch<ColorContractionV>(tp, stream, arg);
     }
-
+    
     long long flops() const
     {
-      // 1 prop spins, 1 evec spin, 3 color, 6 complex, lattice volume
-      return 1 * 3 * 6ll * x.Volume();
+      return 16*3*6ll*x.Volume();
     }
 
     long long bytes() const
     {
-      return x.Bytes() + y.Bytes() + x.Nspin() * x.Nspin() * x.Volume() * sizeof(Complex);
+      return x.Bytes() + 16*y[0].Bytes() + 16*x.Volume() * sizeof(Complex);
     }
   };
 
-  void colorContractQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result)
+  void colorContractQudaV(const ColorSpinorField &x, cvector_ref< const ColorSpinorField > &y, void *result)
   {
-    checkPrecision(x, y);
-    if (x.GammaBasis() != QUDA_DEGRAND_ROSSI_GAMMA_BASIS || y.GammaBasis() != QUDA_DEGRAND_ROSSI_GAMMA_BASIS)
-      errorQuda("Unexpected gamma basis x=%d y=%d", x.GammaBasis(), y.GammaBasis());
-    if (x.Nspin() != 1 || y.Nspin() != 1) errorQuda("Unexpected number of spins x=%d y=%d", x.Nspin(), y.Nspin());
-    instantiate<ColorContract>(x, y, result);
+    instantiate<ColorContractV>(x, y, result);
   }
-  //----------------------------------------------------------------------------
 
-  template <typename Float, int nColor> class ColorCross : TunableKernel2D
+  // color cross mrhs on the y argument
+  template <typename Float, int nColor> class ColorCrossV : TunableKernel2D
   {
   protected:
     const ColorSpinorField &x;
-    const ColorSpinorField &y;
-    ColorSpinorField &result;
-
+    cvector_ref< const ColorSpinorField > &y;
+    cvector_ref< ColorSpinorField > &result;
+    size_t ny ;
     unsigned int minThreads() const { return x.VolumeCB(); }
-
   public:
-    ColorCross(const ColorSpinorField &x, const ColorSpinorField &y, ColorSpinorField &result) :
+    ColorCrossV(const ColorSpinorField &x, cvector_ref< const ColorSpinorField > &y, cvector_ref< ColorSpinorField > &result) :
       TunableKernel2D(x, 2),
       x(x),
       y(y),
+      ny(y.size()),
       result(result)
     {
       apply(device::get_default_stream());
@@ -123,28 +112,25 @@ namespace quda {
     void apply(const qudaStream_t &stream)
     {
       TuneParam tp = tuneLaunch(*this, getTuning(), getVerbosity());
-      ColorCrossArg<Float, nColor> arg(x, y, result);      
-      launch<ColorCrossCompute>(tp, stream, arg);
+      ColorCrossVArg<Float, nColor> arg(x, y, result);      
+      launch<ColorCrossComputeV>(tp, stream, arg);
     }
     
     long long flops() const
     {
-      // 1 spin, 3 color, 6 complex, lattice volume
-      return 3 * 6ll * x.Volume();
+      return ny * 3 * 6ll * x.Volume();
     }
 
     long long bytes() const
     {
-      return x.Bytes() + y.Bytes() + x.Nspin() * x.Nspin() * x.Volume() * sizeof(complex<Float>);
+      return x.Bytes() + ny*y[0].Bytes() + ny*x.Volume() * sizeof(complex<Float>);
     }
   };
 
-  void colorCrossQuda(const ColorSpinorField &x, const ColorSpinorField &y, ColorSpinorField &result)
+  void colorCrossQudaV(const ColorSpinorField &x, cvector_ref< const ColorSpinorField > &y, cvector_ref< ColorSpinorField > &result)
   {
-    checkPrecision(x, y);
-    checkPrecision(result, y);
-    if (x.Ncolor() != 3 || y.Ncolor() != 3 || result.Ncolor() != 3) errorQuda("Unexpected number of colors x = %d y = %d result = %d", x.Ncolor(), y.Ncolor(), result.Ncolor());
-    if (x.Nspin() != 1 || y.Nspin() != 1 || result.Nspin() != 1) errorQuda("Unexpected number of spins x = %d y = %d result = %d", x.Nspin(), y.Nspin(), result.Nspin());
-    instantiate<ColorCross>(x, y, result);
+    checkPrecision(x, y); checkPrecision(result, y);
+    if( y.size() != result.size() ) errorQuda( "Incompatible y and result sizes %zu != %zu\n" , y.size() , result.size() ) ; 
+    instantiate<ColorCrossV>(x, y, result);
   }
 }// namespace quda

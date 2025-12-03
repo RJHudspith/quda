@@ -43,11 +43,27 @@ namespace quda
   void evecProjectLaplace3D(std::vector<Complex> &result, cvector_ref<const ColorSpinorField> &x,
                             cvector_ref<const ColorSpinorField> &y);
 
-  //void evecProjectQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result);
+  /**
+     @brief computes result_i(n) = Tr_C[ x*.y_i ](n)
+     @param[out] lattice-wide result 
+     @param[in] x
+     @param[in] y array of RHS to be inner prodded with
+   */
+  void innerProductQudaV(const ColorSpinorField &x, cvector_ref<const ColorSpinorField> &y, void *result);
 
-  void innerProductQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result);
-  
-  void colorContractQuda(const ColorSpinorField &x, const ColorSpinorField &y, void *result);
-  
-  void colorCrossQuda(const ColorSpinorField &x, const ColorSpinorField &y, ColorSpinorField &result);
+  /**
+     @brief computes color trace : result_i(n) = Tr_C [ x.y_i ](n)
+     @param[out] lattice-wide result
+     @param[in] x
+     @param[in] y array of RHS to be contracted against
+   */
+  void colorContractQudaV(const ColorSpinorField &x, cvector_ref<const ColorSpinorField> &y, void *result);
+
+  /**
+     @brief computes color cross product : result_i(n) = (x \wedge y_i)(n)
+     @param[out] lattice-wide result
+     @param[in] x
+     @param[in] y array of RHS to have the cross product with x taken with
+   */
+  void colorCrossQudaV(const ColorSpinorField &x, cvector_ref< const ColorSpinorField > &y, cvector_ref< ColorSpinorField > &result);
 } // namespace quda
