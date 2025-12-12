@@ -156,7 +156,7 @@ extern "C" {
     int use_sloppy_partial_accumulator; /**< Whether to keep the partial solution accumuator in sloppy precision */
 
     /**< This parameter determines how often we accumulate into the
-       solution vector from the direction vectors in the solver.
+       solution vectorfrom the direction vectors in the solver.
        E.g., running with solution_accumulator_pipeline = 4, means we
        will update the solution vector every four iterations using the
        direction vectors from the prior four iterations.  This
@@ -1912,39 +1912,9 @@ extern "C" {
                        void **host_evec, int nevec, int tile_evec, QudaInvertParam *inv_param, const int X[4]);
 
   /**
-   * @brief computes the laphBaryonKernel
-   * @param[in] n1 number of dilutions for q1
-   * @param[in] n2 number of dilutions for q2
-   * @param[in] n3 number of dilutions for q3
-   * @param[in] nMom number of momenta
-   * @param[in] host_coeffs1 -> stochastic noises for the Evs
-   * @param[in] host_coeffs2 -> stochastic noises for the Evs
-   * @param[in] host_coeffs3 -> stochastic noises for the Evs
-   * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
-   * @param[in] nEv the number of eigenmodes
-   * @param[in] host_evec the eigenvectors on the host
-   * @param[in] inv_param Quda Inversion parameters
-   * @param[out] the returned DFTed array
-   * @param[in] blockSizeMomProj the factor that divides n1.n2.n3 to batch the DFT
-   * @param[in] X Lattice dimensions
-   */
-  void laphBaryonKernel( const int n1, const int n2, const int n3,
-			 const double _Complex *host_coeffs1,
-			 const double _Complex *host_coeffs2,
-			 const double _Complex *host_coeffs3,
-			 const int nMom,
-			 const double _Complex *host_mom,
-			 const int nEv,
-			 void **host_evec,
-			 QudaInvertParam inv_param,
-			 double _Complex *return_array,
-			 const int blockSizeMomProj,
-			 const int X[4] ) ;
-
-    /**
    * @brief computes the meson doublets for distillation
-   * @param[in] n1 number of dilutions for q1
-   * @param[in] n2 number of dilutions for q2
+   * @param[in] nDil number of laph-space dilutions
+   * @param[in] host_coeffs the coefficients of the dilution
    * @param[in] nMom number of momenta
    * @param[in] blockSizeMomProj the factor that divides n1.n2 to batch the DFT
    * @param[in] nEv number of eigenvectors
@@ -1953,59 +1923,19 @@ extern "C" {
    * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
    * @param[out] the returned DFTed array
    * @param[in] X Lattice dimensions
+   * @param[in] N the order of the N-let currently supported are 2,3, and 4
    */
-  void laphMesonKernel( const int n1, const int n2,
-			const double _Complex *host_coeffs1, 
-			const double _Complex *host_coeffs2,
-			const int nMom,
-			const double _Complex *host_mom,
-			const int nEv,
-			void **host_evec,
-			QudaInvertParam inv_param,
-			double _Complex *return_array,
-			const int blockSizeMomProj,
-			const int X[4]) ;
-
-  /**
-   * @brief computes the laph baryon Mode Triplets
-   * @param[in] nMom number of momenta
-   * @param[in] nEv the number of laph eigenvectors
-   * @param[in] blockSizeMomProj the factor that divides nEv*(nEv-1)*(nEv-2)/6 to batch the DFT
-   * @param[in] host_evec the eigenvectors on the host
-   * @param[in] host_mom array of fourier phases : Lx.Ly.Lz*nMom
-   * @param[in] inv_param Quda Inversion parameters
-   * @param[out] the returned DFTd triplet
-   * @param[in] X Lattice dimensions
-   */  
-  void laphBaryonKernelComputeModeTripletA( const int nMom,
-					    const double _Complex *host_mom,
-					    const int nEv,
-					    void **host_evec, 
-					    QudaInvertParam inv_param,
-					    double _Complex *return_array,
-					    const int blockSizeMomProj,
-					    const int X[4] );  
-
-  /**
-   * @brief "B" version of the triplet
-   * @param[in] n1 number of dilutions for q1
-   * @param[in] n2 number of dilutions for q2
-   * @param[in] n3 number of dilutions for q3
-   * @param[in] nMom number of momenta
-   * @param[in] nEv the number of eigenmodes
-   * @param[in] host_coeffs1
-   * @param[in] host_coeffs2
-   * @param[in] host_coeffs3
-   * @param[in] host_mode_trip_buf triplet buffer array
-   * @param[out] return_array the returned DFTed array
-   */
-  void laphBaryonKernelComputeModeTripletB( const int n1, const int n2, const int n3,
-					    const double _Complex *host_coeffs1, 
-					    const double _Complex *host_coeffs2, 
-					    const double _Complex *host_coeffs3,
-					    const int nMom, const int nEv, 
-					    const double _Complex *host_mode_trip_buf, 
-					    double _Complex *return_array);
+  void nKernel( const size_t *nDil ,
+		const double _Complex **host_coeffs,
+		const size_t nMom,
+		const double _Complex *host_mom,
+		const size_t nEv,
+		void **host_evec,
+		QudaInvertParam inv_param,
+		double _Complex *return_array,
+		const size_t blockSizeMomProj,
+		const int X[4] ,
+		const int N ) ;
 
   /**
    * @brief computes the meson doublets for distillation
@@ -2017,16 +1947,18 @@ extern "C" {
    * @param[out] the returned DFTed array
    * @param[in] blockSizeMomProj the factor that divides n1.n2 to batch the DFT
    * @param[in] X Lattice dimensions
+   * @param[in] N the order of the N-let currently supported are 2,3, and 4
    */
-  void laphMesonKernelComputeModeDoublet( const int nMom,
-					  const double _Complex *host_mom,
-					  const int nEv,
-					  void **host_evec,
-					  QudaInvertParam inv_param,
-					  double _Complex *return_array,
-					  const int blockSizeMomProj,
-					  const int X[4]) ;
-    
+  void modeNlet( const size_t nMom,
+		 const double _Complex *host_mom,
+		 const size_t nEv,
+		 void **host_evec,
+		 QudaInvertParam inv_param,
+		 double _Complex *return_array,
+		 const size_t blockSizeMomProj,
+		 const int X[4],
+		 const int N ) ;
+  
 #ifdef __cplusplus
 }
 #endif

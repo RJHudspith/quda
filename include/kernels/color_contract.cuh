@@ -11,7 +11,7 @@
 namespace quda {
 
   // right hand side batch sizes I have tuned
-  constexpr unsigned long max_color_n = 16 , max_cross_n = 8;
+  constexpr unsigned long max_color_n = 16 , max_cross_n = 16;
 
   // MRHS version
   template <typename Float, int nColor_> struct ColorCrossVArg : kernel_param<> {
