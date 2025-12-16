@@ -100,7 +100,7 @@ default_BLAS( const size_t nMom , const int X[4] , const int blockSizeMomProj , 
   cublas_param.trans_b = bDag ? QUDA_BLAS_OP_C : QUDA_BLAS_OP_T;
   cublas_param.m = (int)nMom ;
   cublas_param.n = X[3] ;
-  cublas_param.k = nSp ;
+  cublas_param.k = nSp/2 ;
   cublas_param.lda = nSp ;
   cublas_param.ldb = nSp ;
   cublas_param.ldc = X[3] ;
@@ -124,11 +124,16 @@ doBlasReturn( QudaBLASParam cublas_dft ,
 	      size_t &nInBlock , size_t &blockStart ,
 	      const size_t nMom , const int X[4] , const int precision )
 {
+  const int nSp = X[0]*X[1]*X[2] ;
   cublas_dft.batch_count = (int)nInBlock;
   getProfileBLAS().TPSTART(QUDA_PROFILE_COMPUTE);  
   blas_lapack::native::stridedBatchGEMM(d_mom, d_tmp, d_ret,
-					cublas_dft,
-					QUDA_CUDA_FIELD_LOCATION);
+					cublas_dft, QUDA_CUDA_FIELD_LOCATION);
+  cublas_dft.beta = 1. ;
+  blas_lapack::native::stridedBatchGEMM( (char*)d_mom + nSp*precision,
+					 (char*)d_tmp + nSp*precision,
+					 d_ret, cublas_dft,
+					 QUDA_CUDA_FIELD_LOCATION);
   getProfileBLAS().TPSTOP(QUDA_PROFILE_COMPUTE);
   hostreturn( d_ret , return_array + X[3]*nMom*blockStart ,
 	      (size_t)nInBlock*X[3]*nMom , precision ) ;
