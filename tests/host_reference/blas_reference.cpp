@@ -131,7 +131,7 @@ double blasLUInvQudaVerify(void *ref_array, void *dev_array_inv, uint64_t array_
   int batches = blas_param->batch_count;
 
   // Copy data from problem sized array to reference sized array.
-  void *dev_array_inv_copy = pinned_malloc(array_size * re_im * data_out_size * batches);
+  void *dev_array_inv_copy = host_pinned_malloc(array_size * re_im * data_out_size * batches);
 
   size_t data_in_size = 0;
   switch (blas_param->data_type) {

@@ -153,11 +153,11 @@ double gemm_test(test_t test_param)
   const size_t B_bytes = arrayB_size * data_size;
   const size_t C_bytes = arrayC_size * data_size;
   // allocate
-  void *refA  = pinned_malloc( A_bytes );
-  void *refB  = pinned_malloc( B_bytes );
+  void *refA  = host_pinned_malloc( A_bytes );
+  void *refB  = host_pinned_malloc( B_bytes );
 
-  void *refC1 = pinned_malloc( C_bytes );
-  void *refC2 = pinned_malloc( C_bytes );
+  void *refC1 = host_pinned_malloc( C_bytes );
+  void *refC2 = host_pinned_malloc( C_bytes );
   memset( refC1 , 0. , C_bytes ) ;
   memset( refC2 , 0. , C_bytes ) ;
 
@@ -244,8 +244,8 @@ double lu_inv_test(test_t test_param)
   uint64_t array_size = blas_param.inv_mat_size * blas_param.inv_mat_size;
 
   // Create host data reference arrays
-  void *ref_array = pinned_malloc(batches * array_size * 2 * data_in_size);
-  void *ref_array_inv = pinned_malloc(batches * array_size * 2 * data_in_size);
+  void *ref_array = host_pinned_malloc(batches * array_size * 2 * data_in_size);
+  void *ref_array_inv = host_pinned_malloc(batches * array_size * 2 * data_in_size);
   prepare_ref_array(ref_array, batches, array_size, data_in_size, blas_data_type);
 
   // Create device array appropriate for the requested problem.
@@ -263,8 +263,8 @@ double lu_inv_test(test_t test_param)
   default: errorQuda("Unsupported data type %d\n", blas_data_type);
   }
 
-  dev_array = pinned_malloc(batches * array_size * re_im * data_out_size);
-  dev_array_inv = pinned_malloc(batches * array_size * re_im * data_out_size);
+  dev_array = host_pinned_malloc(batches * array_size * re_im * data_out_size);
+  dev_array_inv = host_pinned_malloc(batches * array_size * re_im * data_out_size);
 
   copy_array(dev_array, ref_array, batches, array_size, data_out_size, blas_data_type);
 

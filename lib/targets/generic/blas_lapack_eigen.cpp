@@ -53,8 +53,8 @@ namespace quda
           printfQuda("BatchInvertMatrix (generic - Eigen): Nc = %d, batch = %lu\n", n, batch);
 
         size_t size = 2 * n * n * batch * prec;
-        void *A_h = (location == QUDA_CUDA_FIELD_LOCATION ? pool_pinned_malloc(size) : A);
-        void *Ainv_h = (location == QUDA_CUDA_FIELD_LOCATION ? pool_pinned_malloc(size) : Ainv);
+        void *A_h = (location == QUDA_CUDA_FIELD_LOCATION ? pool_host_pinned_malloc(size) : A);
+        void *Ainv_h = (location == QUDA_CUDA_FIELD_LOCATION ? pool_host_pinned_malloc(size) : Ainv);
         if (location == QUDA_CUDA_FIELD_LOCATION) { qudaMemcpy(A_h, A, size, qudaMemcpyDeviceToHost); }
 
         long long flops = 0;
@@ -98,8 +98,8 @@ namespace quda
         }
 
         if (location == QUDA_CUDA_FIELD_LOCATION) {
-          pool_pinned_free(Ainv_h);
-          pool_pinned_free(A_h);
+          pool_host_pinned_free(Ainv_h);
+          pool_host_pinned_free(A_h);
           qudaMemcpy((void *)Ainv, Ainv_h, size, qudaMemcpyHostToDevice);
         }
 
